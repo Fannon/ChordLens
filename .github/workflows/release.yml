@@ -49,15 +49,26 @@ jobs:
       - name: Prepare Artifacts
         shell: bash
         run: |
-          mkdir -p dist
-          cp "${{ matrix.target-path }}" "dist/${{ matrix.binary-name }}.vst3"
-          cp "${{ matrix.target-path }}" "dist/${{ matrix.binary-name }}.clap"
+          mkdir -p dist/ChordLens
+          cp "${{ matrix.target-path }}" "dist/ChordLens/ChordLens.vst3"
+          cp "${{ matrix.target-path }}" "dist/ChordLens/ChordLens.clap"
+          
+          # Use different zipping strategy per OS for reliable results
+          if [ "${{ matrix.os-name }}" == "windows" ]; then
+            # Windows: use powershell to create a proper zip
+            powershell Compress-Archive -Path dist/ChordLens -DestinationPath dist/ChordLens_Windows.zip
+          else
+            # Unix-like: use standard zip
+            cd dist
+            zip -r "ChordLens_${{ matrix.os-name }}.zip" ChordLens
+            cd ..
+          fi
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os-name }}-build
-          path: dist/*
+          name: ${{ matrix.os-name }}-zip
+          path: dist/*.zip
 
   release:
     name: Create GitHub Release

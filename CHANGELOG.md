@@ -2,6 +2,12 @@
 
 All notable changes to the **ChordLens** project will be documented in this file.
 
+## [0.1.4] - 2026-04-04
+
+### Changed
+- **Optimized Distribution:** Shifted to OS-specific ZIP bundles (`ChordLens_Windows.zip`, etc.) to provide a cleaner installation experience with native file naming.
+- **Project Identity:** Official Vendor and Author set to **Simon Heimler**.
+
 ## [0.1.3] - 2026-04-04
 
 ### Added

@@ -181,9 +181,9 @@ impl Default for ChordLens {
 
 impl Plugin for ChordLens {
     const NAME: &'static str = "ChordLens";
-    const VENDOR: &'static str = "ChordLens Authors";
-    const URL: &'static str = "https://github.com/your-username/chord-lens";
-    const EMAIL: &'static str = "";
+    const VENDOR: &'static str = "Simon Heimler";
+    const URL: &'static str = "https://github.com/Fannon/ChordLens";
+    const EMAIL: &'static str = "simon@heimler.de";
 
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
