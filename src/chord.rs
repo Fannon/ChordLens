@@ -1,25 +1,8 @@
 //! # chord.rs — Chord Recognition Engine
 //!
-//! Pure interval-math chord detector.  No external music–theory crates are
-//! used; every available crate either targets audio-signal analysis (not MIDI
-//! note lists), focuses on *generation* rather than *detection*, or returns
-//! 404.  Keeping it internal gives us full control and zero compile overhead.
-//!
-//! ## Approach
-//! 1. Collect the set of active MIDI note numbers.
-//! 2. Find the **lowest** note (bass note).
-//! 3. Build a **pitch-class set**: reduce every note modulo 12, deduplicate,
-//!    sort.  This removes octave duplicates and makes the math octave-agnostic.
-//! 4. For each pitch class as potential root, compute *intervals above the
-//!    root* (0–11 semitones) and match against a look-up table of known chord
-//!    qualities.
-//! 5. Choose the best match (longest that still covers all pitch classes), then
-//!    report the actual root, quality string, inversion hint, and slash bass
-//!    note if the bass ≠ root.
+//! Pure interval-math chord detector.
 
 use std::fmt;
-
-// ─── Public types ────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub enum NoteRole {
@@ -29,28 +12,21 @@ pub enum NoteRole {
     Bass,
 }
 
-/// Everything the GUI needs to display.
 #[derive(Clone, Debug, Default)]
 pub struct ChordInfo {
-    /// The root note name, e.g. `"C"`, `"F#"`. `"–"` when empty.
     pub root: String,
-    /// The quality suffix, e.g. `"maj7"`, `"m"`.
     pub quality: String,
-    /// Omitted notes suffix, e.g. `"(no5)"`.
     pub omitted: String,
-    /// Optional slash suffix, e.g. `"/G"`.  Empty when bass == root.
     pub slash: String,
-    /// Inversion description: `""`, `"1st inv."`, `"2nd inv."`, `"3rd inv."`.
     pub inversion: String,
-    /// Active notes formatted as strings with their role.
+    pub degree: String,
     pub active_notes: Vec<(String, NoteRole)>,
-    /// Raw active MIDI values with their role, used for UI visualization.
     pub active_midi: Vec<(u8, NoteRole)>,
 }
 
 impl fmt::Display for ChordInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.root == "–" {
+        if self.root == "–" || self.root.is_empty() {
             write!(f, "–")
         } else {
             write!(f, "{}{}{}{}", self.root, self.quality, self.omitted, self.slash)
@@ -58,29 +34,24 @@ impl fmt::Display for ChordInfo {
     }
 }
 
-// ─── Note naming ─────────────────────────────────────────────────────────────
+const NOTE_NAMES_SHARP: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const NOTE_NAMES_FLAT: [&str; 12] = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+const FLAT_KEYS: [u8; 6] = [5, 10, 3, 8, 1, 6];
 
-const NOTE_NAMES: [&str; 12] = [
-    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-];
+pub fn get_note_names(scale_root: u8) -> &'static [&'static str; 12] {
+    if FLAT_KEYS.contains(&(scale_root % 12)) { &NOTE_NAMES_FLAT } else { &NOTE_NAMES_SHARP }
+}
 
-/// Convert a MIDI note number to a name like `"C4"`, `"F#3"`.
-pub fn midi_to_name(note: u8) -> String {
+pub fn midi_to_name(note: u8, scale_root: u8) -> String {
+    let names = get_note_names(scale_root);
     let pc = (note % 12) as usize;
-    let octave = (note / 12) as i32 - 1; // MIDI 60 = C4
-    format!("{}{}", NOTE_NAMES[pc], octave)
+    let octave = (note / 12) as i32 - 1; 
+    format!("{}{}", names[pc], octave)
 }
 
-pub fn pc_name(pc: u8) -> &'static str {
-    NOTE_NAMES[(pc % 12) as usize]
+pub fn pc_name(pc: u8, scale_root: u8) -> &'static str {
+    get_note_names(scale_root)[(pc % 12) as usize]
 }
-
-// ─── Chord quality table ──────────────────────────────────────────────────────
-//
-// Each entry is (interval set, quality suffix).
-// Intervals are semitones above the root, *excluding* 0.
-// Ordering: more specific (more intervals) entries come *first* so the matcher
-// can greedily prefer the richest match.
 
 struct ChordTemplate {
     /// Semitone intervals above the root (root=0 is implicit, not listed).
@@ -89,555 +60,150 @@ struct ChordTemplate {
     quality: &'static str,
 }
 
-/// Build the table once as a `const`-able slice.
+// Strictly ordered by complexity (matching richest chords first)
 static TEMPLATES: &[ChordTemplate] = &[
     // ── 13th chords ──────────────────────────────────────────────────────────
-    // 13th with 11th (theoretically complete)
     ChordTemplate { intervals: &[4, 7, 10, 14, 17, 21], quality: "13" },
     ChordTemplate { intervals: &[3, 7, 10, 14, 17, 21], quality: "m13" },
     ChordTemplate { intervals: &[4, 7, 11, 14, 17, 21], quality: "maj13" },
-    // Standard 13th (11th omitted)
-    ChordTemplate { intervals: &[4, 7, 10, 14, 21], quality: "13(no11)" },
-    ChordTemplate { intervals: &[3, 7, 10, 14, 21], quality: "m13(no11)" },
-    ChordTemplate { intervals: &[4, 7, 11, 14, 21], quality: "maj13(no11)" },
-    // 13th omitting 5th and 11th
-    ChordTemplate { intervals: &[4, 10, 14, 21], quality: "13(no5,no11)" },
-    ChordTemplate { intervals: &[3, 10, 14, 21], quality: "m13(no5,no11)" },
-    ChordTemplate { intervals: &[4, 11, 14, 21], quality: "maj13(no5,no11)" },
-    // 13th omitting 5th, 9th AND 11th (guitar shell voicing)
-    ChordTemplate { intervals: &[4, 10, 21], quality: "13(no5,no9,no11)" },
-    ChordTemplate { intervals: &[3, 10, 21], quality: "m13(no5,no9,no11)" },
-    ChordTemplate { intervals: &[4, 11, 21], quality: "maj13(no5,no9,no11)" },
     // ── 11th chords ──────────────────────────────────────────────────────────
     ChordTemplate { intervals: &[4, 7, 10, 14, 17], quality: "11" },
     ChordTemplate { intervals: &[3, 7, 10, 14, 17], quality: "m11" },
-    ChordTemplate { intervals: &[4, 7, 11, 14, 17], quality: "maj11" },
-    ChordTemplate { intervals: &[4, 7, 10, 17], quality: "7add11" },
+    ChordTemplate { intervals: &[3, 6, 10, 14, 17], quality: "m11b5" },
+    ChordTemplate { intervals: &[4, 7, 11, 14, 18], quality: "maj7#11" },
+    ChordTemplate { intervals: &[4, 7, 10, 14, 18], quality: "9#11" },
     // ── 9th chords ───────────────────────────────────────────────────────────
+    ChordTemplate { intervals: &[4, 7, 10, 14, 20], quality: "9b13" },
+    ChordTemplate { intervals: &[4, 7, 9, 14], quality: "6/9" },
+    ChordTemplate { intervals: &[3, 7, 9, 14], quality: "m6/9" },
     ChordTemplate { intervals: &[4, 7, 10, 14], quality: "9" },
     ChordTemplate { intervals: &[3, 7, 10, 14], quality: "m9" },
     ChordTemplate { intervals: &[4, 7, 11, 14], quality: "maj9" },
-    ChordTemplate { intervals: &[4, 10, 14], quality: "9(no5)" },
-    ChordTemplate { intervals: &[3, 10, 14], quality: "m9(no5)" },
-    ChordTemplate { intervals: &[4, 11, 14], quality: "maj9(no5)" },
     ChordTemplate { intervals: &[4, 7, 10, 13], quality: "7b9" },
     ChordTemplate { intervals: &[4, 7, 10, 15], quality: "7#9" },
-    ChordTemplate { intervals: &[4, 7, 14], quality: "add9" },
-    ChordTemplate { intervals: &[3, 7, 14], quality: "madd9" },
     // ── 7th chords ───────────────────────────────────────────────────────────
-    ChordTemplate { intervals: &[4, 7, 10], quality: "7" },       // dominant 7
+    ChordTemplate { intervals: &[4, 7, 10, 18], quality: "7#11" },
+    ChordTemplate { intervals: &[4, 7, 10], quality: "7" },
     ChordTemplate { intervals: &[4, 7, 11], quality: "maj7" },
     ChordTemplate { intervals: &[3, 7, 10], quality: "m7" },
-    ChordTemplate { intervals: &[3, 7, 11], quality: "mMaj7" },
+    ChordTemplate { intervals: &[3, 6, 10], quality: "ø7" },
+    ChordTemplate { intervals: &[3, 6, 9],  quality: "dim7" },
+    ChordTemplate { intervals: &[4, 8, 10], quality: "7aug" },
+    // ── Jazz Omissions (Common "no 5th" etc.) ────────────────────────────────
+    ChordTemplate { intervals: &[4, 10, 21], quality: "13(no5,no9,no11)" },
+    ChordTemplate { intervals: &[4, 10, 14, 21], quality: "13(no5,no11)" },
+    ChordTemplate { intervals: &[4, 10, 14], quality: "9(no5)" },
     ChordTemplate { intervals: &[4, 10], quality: "7(no5)" },
-    ChordTemplate { intervals: &[4, 11], quality: "maj7(no5)" },
     ChordTemplate { intervals: &[3, 10], quality: "m7(no5)" },
-    ChordTemplate { intervals: &[3, 6, 10], quality: "ø7" },      // half-diminished / m7b5
-    ChordTemplate { intervals: &[3, 6, 9],  quality: "dim7" },    // fully diminished
-    ChordTemplate { intervals: &[4, 8, 10], quality: "aug7" },
-    ChordTemplate { intervals: &[4, 8, 11], quality: "augMaj7" },
-    // ── Suspended + dominant ─────────────────────────────────────────────────
-    ChordTemplate { intervals: &[2, 7],     quality: "sus2" },
-    ChordTemplate { intervals: &[5, 7],     quality: "sus4" },
-    ChordTemplate { intervals: &[5, 7, 10], quality: "7sus4" },
-    ChordTemplate { intervals: &[5, 7, 11], quality: "maj7sus4" },
+    // ── Added tones ──────────────────────────────────────────────────────────
+    ChordTemplate { intervals: &[4, 7, 9],  quality: "6" },
+    ChordTemplate { intervals: &[3, 7, 9],  quality: "m6" },
+    ChordTemplate { intervals: &[3, 7, 14], quality: "madd9" },
+    ChordTemplate { intervals: &[4, 7, 14], quality: "add9" },
     // ── Basic triads ─────────────────────────────────────────────────────────
-    ChordTemplate { intervals: &[4, 7],     quality: "" },         // major
+    ChordTemplate { intervals: &[4, 7],     quality: "" },
     ChordTemplate { intervals: &[3, 7],     quality: "m" },
     ChordTemplate { intervals: &[3, 6],     quality: "dim" },
     ChordTemplate { intervals: &[4, 8],     quality: "aug" },
-    // ── Added tones (triads + colour) ────────────────────────────────────────
-    ChordTemplate { intervals: &[4, 7, 9],  quality: "6" },
-    ChordTemplate { intervals: &[3, 7, 9],  quality: "m6" },
-    ChordTemplate { intervals: &[4, 7, 6],  quality: "add#11" },   // Lydian colour
-    // ── Power chord / dyads ──────────────────────────────────────────────────
+    ChordTemplate { intervals: &[2, 7],     quality: "sus2" },
+    ChordTemplate { intervals: &[5, 7],     quality: "sus4" },
     ChordTemplate { intervals: &[7],        quality: "5" },
-    ChordTemplate { intervals: &[3],        quality: "(min 3rd)" },
-    ChordTemplate { intervals: &[4],        quality: "(maj 3rd)" },
+    ChordTemplate { intervals: &[3],        quality: "m(no5)" },
+    ChordTemplate { intervals: &[4],        quality: "(no5)" },
 ];
 
-// ─── Detection ───────────────────────────────────────────────────────────────
-
-/// Detect the chord from a set of active MIDI note numbers.
-///
-/// `active_notes` can be in any order; the function sorts internally.
-pub fn detect(active_notes: &[u8]) -> ChordInfo {
+pub fn detect(active_notes: &[u8], scale_root: u8, allow_rootless: bool) -> ChordInfo {
     let mut sorted_notes: Vec<u8> = active_notes.to_vec();
     sorted_notes.sort_unstable();
-    
-    // Dedup pitch classes to detect octaves (e.g. C1, C2 -> [0])
+    if sorted_notes.is_empty() { return ChordInfo::default(); }
     let mut pcs: Vec<u8> = sorted_notes.iter().map(|n| n % 12).collect();
-    pcs.sort_unstable();
-    pcs.dedup();
-
-    if sorted_notes.is_empty() {
-        return ChordInfo {
-            root: String::new(),
-            quality: String::new(),
-            omitted: String::new(),
-            slash: String::new(),
-            inversion: String::new(),
-            active_notes: vec![],
-            active_midi: vec![],
-        };
-    }
-
+    pcs.sort_unstable(); pcs.dedup();
     if pcs.len() == 1 {
-        // All active notes are octaves of the same pitch class
-        let pc = sorted_notes[0] % 12;
-        let root_name = if sorted_notes.len() > 1 {
-            pc_name(pc).to_string()
-        } else {
-            midi_to_name(sorted_notes[0])
-        };
-        
-        let active_notes: Vec<(String, NoteRole)> = sorted_notes
-            .iter()
-            .map(|&n| (midi_to_name(n), NoteRole::Root))
-            .collect();
-            
-        return ChordInfo {
-            root: root_name,
-            quality: String::new(),
-            omitted: String::new(),
-            slash: String::new(),
-            inversion: String::new(),
-            active_notes,
-            active_midi: sorted_notes.iter().map(|&n| (n, NoteRole::Root)).collect(),
-        };
+        let pc = pcs[0]; let root_name = pc_name(pc, scale_root);
+        return ChordInfo { root: root_name.to_string(), degree: "I".to_string(), active_notes: sorted_notes.iter().map(|&n| (midi_to_name(n, scale_root), NoteRole::Root)).collect(), active_midi: sorted_notes.iter().map(|&n| (n, NoteRole::Root)).collect(), ..Default::default() };
     }
-
-    sorted_notes.dedup();
-    if sorted_notes.len() < 2 {
-        // Single note left after raw dedup (if any)
-        let root_name = midi_to_name(sorted_notes[0]);
-        let active_notes: Vec<(String, NoteRole)> = sorted_notes
-            .iter()
-            .map(|&n| (midi_to_name(n), NoteRole::Root))
-            .collect();
-            
-        return ChordInfo {
-            root: root_name,
-            quality: String::new(),
-            omitted: String::new(),
-            slash: String::new(),
-            inversion: String::new(),
-            active_notes,
-            active_midi: sorted_notes.iter().map(|&n| (n, NoteRole::Root)).collect(),
-        };
+    let bass_midi = sorted_notes[0]; let bass_pc = bass_midi % 12;
+    let mut best: Option<(u8, &'static str, usize)> = None;
+    let mut roots_to_check = pcs.clone();
+    if allow_rootless {
+        let t = scale_root % 12; let d = (scale_root + 7) % 12;
+        if !roots_to_check.contains(&t) { roots_to_check.push(t); }
+        if !roots_to_check.contains(&d) { roots_to_check.push(d); }
     }
-
-    // Bass note = lowest sounding MIDI number
-    let bass_midi = active_notes.iter().copied().min().unwrap_or(0);
-    let bass_pc = bass_midi % 12;
-
-
-    // Try every pitch class as a potential root candidate.
-    // We pick the candidate that:
-    //   (a) matches the most intervals without *missing* any active note, AND
-    //   (b) as a tie-breaker, is a more common root ordering.
-    let mut best: Option<(u8, &'static str, usize)> = None; // (root_pc, quality, interval_count)
-
-    for &root_pc in &pcs {
-        // Build an interval set relative to `root_pc`, wrapping at 12
-        // (octave-reduced), then look for templates that are a subset of what
-        // we have AND account for every pitch class present.
-        let intervals: Vec<u8> = pcs
-            .iter()
-            .filter(|&&pc| pc != root_pc)
-            .map(|&pc| (pc + 12 - root_pc) % 12)
-            .collect();
-
-        // Extend intervals to handle 9ths/11ths/13ths by also considering the
-        // +12/-12 compound forms when the same pitch class appears an octave up
-        // in the sounding notes (i.e., we do have the note somewhere).
-        // Strategy: for every interval i in [0..12], if (i+12) or (i+24) makes
-        // sense as a chord extension, include it.  We compute compound intervals
-        // from the raw sorted_notes compared to the first occurrence of root_pc.
-        let root_midi = sorted_notes
-            .iter()
-            .copied()
-            .find(|&n| n % 12 == root_pc)
-            .unwrap_or(root_pc);
-
-        let compound_intervals: Vec<u8> = sorted_notes
-            .iter()
-            .filter(|&&n| n % 12 != root_pc) // exclude root note(s)
-            .filter_map(|&n| {
-                let diff = n as i16 - root_midi as i16;
-                if diff >= 0 && diff <= 24 {
-                    Some(diff as u8)
-                } else if diff < 0 {
-                    // note is below root in MIDI space – use octave-reduced form
-                    Some((diff.rem_euclid(12)) as u8)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Merge simple + compound intervals – a template matches if ALL its
-        // listed intervals appear in either set, AND the union of template
-        // intervals (mod 12) covers all pitch classes.
+    for &root_pc in &roots_to_check {
+        let intervals_pc: Vec<u8> = pcs.iter().filter(|&&pc| pc != root_pc).map(|&pc| (pc + 12 - root_pc) % 12).collect();
+        let root_midi = sorted_notes.iter().find(|&&n| n % 12 == root_pc).copied().unwrap_or(root_pc);
+        let compound: Vec<u8> = sorted_notes.iter().filter(|&&n| n % 12 != root_pc).filter_map(|&n| {
+            let diff = n as i16 - root_midi as i16;
+            if diff >= 0 && diff <= 36 { Some(diff as u8) } else { Some(diff.rem_euclid(12) as u8) }
+        }).collect();
         'template: for tmpl in TEMPLATES {
-            // Check that every template interval is present (in either set)
+            // Strict matching: Every interval in the template MUST be present
             for &ti in tmpl.intervals {
-                let ti_reduced = ti % 12;
-                let found = compound_intervals.contains(&ti)
-                    || intervals.contains(&ti_reduced)
-                    || (ti > 12 && intervals.contains(&(ti - 12)));
-                if !found {
-                    continue 'template;
-                }
+                let r = ti % 12;
+                if !compound.contains(&ti) && !intervals_pc.contains(&r) { continue 'template; }
             }
+            // Strict match also ensures no OTHER pitch classes are present
+            let mut covered = vec![root_pc];
+            for &ti in tmpl.intervals { covered.push((root_pc + ti) % 12); }
+            covered.sort_unstable(); covered.dedup();
+            for &p in &pcs { if !covered.contains(&p) { continue 'template; } }
 
-            // Check that every active pitch class is accounted for by the
-            // template (root + template intervals mod 12).
-            let mut covered: Vec<u8> = vec![root_pc];
-            for &ti in tmpl.intervals {
-                covered.push((root_pc + ti) % 12);
-            }
-            covered.sort_unstable();
-            covered.dedup();
-            for &pc in &pcs {
-                if !covered.contains(&pc) {
-                    continue 'template;
-                }
-            }
-
-            // Valid match – prefer the longest template (richest chord)
             let score = tmpl.intervals.len();
-            let better = match &best {
-                None => true,
-                Some((best_root, _, best_score)) => {
-                    if score > *best_score {
-                        true
-                    } else if score == *best_score {
-                        // Tie-breaker: if scores are equal (e.g. symmetrical dim7), 
-                        // prefer the one where the bass is the root.
-                        root_pc == bass_pc && *best_root != bass_pc
-                    } else {
-                        false
-                    }
-                }
-            };
-            if better {
-                best = Some((root_pc, tmpl.quality, score));
-            }
-            // We keep searching other roots but stop testing more templates for
-            // *this* root once the first (richest preferable) one matched.
-            break;
+            let better = match &best { None => true, Some((br, _, bs)) => { if score > *bs { true } else if score == *bs { root_pc == bass_pc && *br != bass_pc } else { false } } };
+            if better { best = Some((root_pc, tmpl.quality, score)); }
         }
     }
-
-    // Build the final ChordInfo
     match best {
         None => {
-            // Unrecognised combination
-            let active_notes = sorted_notes
-                .iter()
-                .map(|&n| {
-                    (
-                        midi_to_name(n),
-                        if n == bass_midi { NoteRole::Bass } else { NoteRole::Normal }
-                    )
-                })
-                .collect();
-                
-            ChordInfo {
-                root: String::new(),
-                quality: String::new(),
-                omitted: String::new(),
-                slash: String::new(),
-                inversion: String::new(),
-                active_notes,
-                active_midi: sorted_notes.iter().map(|&n| (n, NoteRole::Normal)).collect(),
-            }
+            ChordInfo { active_notes: sorted_notes.iter().map(|&n| (midi_to_name(n, scale_root), if n == bass_midi { NoteRole::Bass } else { NoteRole::Normal })).collect(), active_midi: sorted_notes.iter().map(|&n| (n, NoteRole::Normal)).collect(), ..Default::default() }
         }
-        Some((root_pc, quality, _)) => {
-            // Root name
-            let root_name = pc_name(root_pc);
-            
-            let mut qual_str = quality.to_string();
-            let mut omitted = String::new();
-            if let Some(idx) = qual_str.find("(no") {
-                omitted = qual_str[idx..].to_string();
-                qual_str.truncate(idx);
-            }
-
-            // Slash chord: bass note differs from root
-            let slash = if bass_pc != root_pc {
-                format!("/{}", pc_name(bass_pc))
-            } else {
-                String::new()
-            };
-
-            // Inversion calculation
-            let inversion = if slash.is_empty() {
-                String::new()
-            } else {
-                let first_root_midi = sorted_notes
-                    .iter()
-                    .find(|&&n| n % 12 == root_pc)
-                    .copied()
-                    .unwrap_or(bass_midi);
-
-                let template_pcs: Vec<u8> = {
-                    let tmpl_intervals = TEMPLATES
-                        .iter()
-                        .find(|t| t.quality == quality)
-                        .map(|t| t.intervals)
-                        .unwrap_or(&[]);
-                    let mut v: Vec<u8> = vec![root_pc];
-                    for &ti in tmpl_intervals {
-                        v.push((root_pc + ti) % 12);
+        Some((r_pc, quality, _)) => {
+            let r_name = pc_name(r_pc, scale_root);
+            let mut qual = quality.to_string(); let mut omitted = String::new();
+            if let Some(i) = qual.find("(no") { omitted = qual[i..].to_string(); qual.truncate(i); }
+            let slash = if bass_pc != r_pc { format!("/{}", pc_name(bass_pc, scale_root)) } else { String::new() };
+            let rel = (r_pc as i32 + 12 - scale_root as i32) % 12;
+            let mut deg = match rel { 0 => "I", 1 => "bII", 2 => "II", 3 => "bIII", 4 => "III", 5 => "IV", 6 => "#IV", 7 => "V", 8 => "bVI", 9 => "VI", 10 => "bVII", 11 => "VII", _ => "?" }.to_string();
+            if (qual.contains('m') || qual.contains("dim") || qual.contains('ø')) && !qual.contains("maj") { deg = deg.to_lowercase(); }
+            let first_r_midi = sorted_notes.iter().find(|&&n| n % 12 == r_pc).copied().unwrap_or(bass_midi);
+            let inv = if slash.is_empty() { String::new() } else {
+                let mut v = vec![r_pc];
+                if let Some(t) = TEMPLATES.iter().find(|t| t.quality == quality) { for &ti in t.intervals { v.push((r_pc + ti) % 12); } }
+                v.sort_unstable(); v.dedup();
+                let bc = sorted_notes.iter().filter(|&&n| n < first_r_midi && v.contains(&(n % 12))).map(|&n| n % 12).collect::<std::collections::HashSet<_>>().len();
+                let bass_rel = (bass_pc + 12 - r_pc) % 12;
+                if bc > 0 {
+                    match bass_rel {
+                        3 | 4 => "1st inv.".to_string(),
+                        6 | 7 | 8 => "2nd inv.".to_string(),
+                        9 | 10 | 11 => "3rd inv.".to_string(),
+                        _ => String::new()
                     }
-                    v.sort_unstable();
-                    v.dedup();
-                    v
-                };
-
-                let below_count = sorted_notes
-                    .iter()
-                    .filter(|&&n| n < first_root_midi && template_pcs.contains(&(n % 12)))
-                    .map(|&n| n % 12)
-                    .collect::<std::collections::HashSet<_>>()
-                    .len();
-
-                match below_count {
-                    1 => "1st inv.".to_string(),
-                    2 => "2nd inv.".to_string(),
-                    3 => "3rd inv.".to_string(),
-                    _ => String::new(),
-                }
+                } else { String::new() }
             };
-
-            let active_notes = sorted_notes
-                .iter()
-                .map(|&n| {
-                    let role = if n == bass_midi && bass_pc != root_pc {
-                        NoteRole::Bass
-                    } else if n % 12 == root_pc {
-                        NoteRole::Root
-                    } else {
-                        NoteRole::Normal
-                    };
-                    (midi_to_name(n), role)
-                })
-                .collect();
-
-            let active_midi = sorted_notes
-                .iter()
-                .map(|&n| {
-                    let role = if n == bass_midi && bass_pc != root_pc {
-                        NoteRole::Bass
-                    } else if n % 12 == root_pc {
-                        NoteRole::Root
-                    } else {
-                        NoteRole::Normal
-                    };
-                    (n, role)
-                })
-                .collect();
-
-            ChordInfo { root: root_name.to_string(), quality: qual_str, omitted, slash, inversion, active_notes, active_midi }
+            ChordInfo { root: r_name.to_string(), quality: qual, omitted, slash, inversion: inv, degree: deg, active_notes: sorted_notes.iter().map(|&n| { let role = if n == bass_midi && bass_pc != r_pc { NoteRole::Bass } else if n % 12 == r_pc { NoteRole::Root } else { NoteRole::Normal }; (midi_to_name(n, scale_root), role) }).collect(), active_midi: sorted_notes.iter().map(|&n| { let role = if n == bass_midi && bass_pc != r_pc { NoteRole::Bass } else if n % 12 == r_pc { NoteRole::Root } else { NoteRole::Normal }; (n, role) }).collect() }
         }
     }
 }
 
-pub fn detect_scale(
-    history_midi: &std::collections::VecDeque<u8>, 
-    current_bass: Option<u8>,
-    current_key: &str,
-) -> (String, u8, Vec<i32>) {
-    if history_midi.is_empty() {
-        return ("Unknown".to_string(), 0, vec![]);
-    }
-
-    // 1. Calculate pitch class frequencies with recency weighting
-    // Newest notes count for double points to respond to key changes faster
-    let mut pc_counts = [0i32; 12];
-    let len = history_midi.len();
-    for (i, &m) in history_midi.iter().enumerate() {
-        let weight = if i > len / 2 { 2 } else { 1 };
-        pc_counts[(m % 12) as usize] += weight;
-    }
-
-    // 2. Define scales with "simplicity" weights
-    // (Name, Intervals, Weight) - higher weight = more "expected"
-    let modes = [
-        ("Major", vec![0, 2, 4, 5, 7, 9, 11], 100),
-        ("Minor", vec![0, 2, 3, 5, 7, 8, 10], 90),
-        ("Maj Pent.", vec![0, 2, 4, 7, 9], 80),
-        ("Min Pent.", vec![0, 3, 5, 7, 10], 80),
-        ("Dorian", vec![0, 2, 3, 5, 7, 9, 10], 60),
-        ("Mixolydian", vec![0, 2, 4, 5, 7, 9, 10], 50),
-        ("Lydian", vec![0, 2, 4, 6, 7, 9, 11], 40),
-        ("Phrygian", vec![0, 1, 3, 5, 7, 8, 10], 30),
-        ("Locrian", vec![0, 1, 3, 5, 6, 8, 10], 20),
-    ];
-
-    // 3. Score every possible root/mode combination
-    let mut best_score = -1000;
-    let mut best_name = String::from("Unknown");
-
-    for root_pc in 0..12 {
-        let root_freq = pc_counts[root_pc as usize];
-        
-        for (mode_name, intervals, base_weight) in modes.iter() {
-            let mut score = *base_weight;
-
-            // Tonic bonus: If this is the most frequent note, it's likely the root
-            score += root_freq * 10;
-            
-            // Bass bonus: If current bass matches root
-            if let Some(b) = current_bass {
-                if b % 12 == root_pc as u8 {
-                    score += 50;
-                }
-            }
-
-            // Fit points:
-            for pc in 0..12 {
-                let freq = pc_counts[pc as usize];
-                if freq == 0 { continue; }
-                
-                let rel = (pc + 12 - root_pc) % 12;
-                if intervals.contains(&(rel as i32)) {
-                    score += freq * 5;
-                } else {
-                    // Penalty for notes not in scale (increased for faster modulation detection)
-                    score -= freq * 50;
-                }
-            }
-
-            // Hysteresis: If this is the CURRENT scale, give it a massive head start
-            let candidate_name = format!("{} {}", pc_name(root_pc as u8), mode_name);
-            if candidate_name == current_key {
-                score += 150; 
-            }
-
-            if score > best_score {
-                best_score = score;
-                best_name = candidate_name;
-            }
-        }
-    }
-
-    // Find matched mode for returning intervals
-    let mut root_pc = 0;
-    let mut best_intervals = vec![];
+pub fn detect_scale(history: &std::collections::VecDeque<u8>, bass: Option<u8>, cur_key: &str) -> (String, u8, Vec<i32>) {
+    if history.is_empty() { return ("Unknown".to_string(), 0, vec![]); }
+    let mut counts = [0i32; 12]; let l = history.len();
+    for (i, &m) in history.iter().enumerate() { counts[(m % 12) as usize] += if i > l / 2 { 2 } else { 1 }; }
+    let modes = [("Major", vec![0, 2, 4, 5, 7, 9, 11], 100), ("Minor", vec![0, 2, 3, 5, 7, 8, 10], 90), ("Maj Pent.", vec![0, 2, 4, 7, 9], 80), ("Min Pent.", vec![0, 3, 5, 7, 10], 80), ("Dorian", vec![0, 2, 3, 5, 7, 9, 10], 60), ("Mixolydian", vec![0, 2, 4, 5, 7, 9, 10], 50), ("Lydian", vec![0, 2, 4, 6, 7, 9, 11], 40), ("Phrygian", vec![0, 1, 3, 5, 7, 8, 10], 30), ("Locrian", vec![0, 1, 3, 5, 6, 8, 10], 20)];
+    let mut bs = -1000; let mut bn = String::from("Unknown");
     for r in 0..12 {
-        for (m, ints, _) in modes.iter() {
-            if format!("{} {}", pc_name(r as u8), m) == best_name {
-                root_pc = r;
-                best_intervals = ints.clone();
-            }
+        for (m, ints, w) in modes.iter() {
+            let mut s = *w + counts[r as usize] * 10;
+            if let Some(b) = bass { if b % 12 == r as u8 { s += 50; } }
+            for pc in 0..12 { let f = counts[pc as usize]; if f == 0 { continue; } let rel = (pc + 12 - r) % 12; if ints.contains(&(rel as i32)) { s += f * 5; } else { s -= f * 50; } }
+            let cand = format!("{} {}", pc_name(r as u8, r as u8), m);
+            if cand == cur_key { s += 150; }
+            if s > bs { bs = s; bn = cand; }
         }
     }
-
-    (best_name, root_pc as u8, best_intervals)
-}
-
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn chord_str(notes: &[u8]) -> String {
-        let info = detect(notes);
-        format!("{}{}{}{}", info.root, info.quality, info.omitted, info.slash)
-    }
-
-    #[test]
-    fn test_cmajor() {
-        // C4=60  E4=64  G4=67
-        assert_eq!(chord_str(&[60, 64, 67]), "C");
-    }
-
-    #[test]
-    fn test_aminor() {
-        // A3=57  C4=60  E4=64
-        assert_eq!(chord_str(&[57, 60, 64]), "Am");
-    }
-
-    #[test]
-    fn test_g7() {
-        // G3=55  B3=59  D4=62  F4=65
-        assert_eq!(chord_str(&[55, 59, 62, 65]), "G7");
-    }
-
-    #[test]
-    fn test_cmaj7() {
-        // C4=60  E4=64  G4=67  B4=71
-        assert_eq!(chord_str(&[60, 64, 67, 71]), "Cmaj7");
-    }
-
-    #[test]
-    fn test_slash_chord() {
-        // C/G: G2=43  C4=60  E4=64  G4=67
-        let info = detect(&[43, 60, 64, 67]);
-        assert_eq!(info.root, "C");
-        assert_eq!(info.quality, "");
-        assert_eq!(info.slash, "/G");
-    }
-
-    #[test]
-    fn test_inversion() {
-        // C/E (1st inversion): E3=52  C4=60  G4=67
-        let info = detect(&[52, 60, 67]);
-        assert_eq!(info.root, "C");
-        assert_eq!(info.quality, "");
-        assert_eq!(info.slash, "/E");
-        assert_eq!(info.inversion, "1st inv.");
-    }
-
-    #[test]
-    fn test_dim7() {
-        // Bdim7: B3=59  D4=62  F4=65  Ab4=68
-        assert_eq!(chord_str(&[59, 62, 65, 68]), "Bdim7");
-    }
-
-    #[test]
-    fn test_sus4() {
-        // Csus4: C4=60  F4=65  G4=67
-        assert_eq!(chord_str(&[60, 65, 67]), "Csus4");
-    }
-
-    #[test]
-    fn test_ninth() {
-        // C9: C3=48  E3=52  G3=55  Bb3=58  D4=62
-        assert_eq!(chord_str(&[48, 52, 55, 58, 62]), "C9");
-        
-        // Cmaj9: C3=48  E3=52  G3=55  B3=59  D4=62
-        assert_eq!(chord_str(&[48, 52, 55, 59, 62]), "Cmaj9");
-    }
-
-    #[test]
-    fn test_eleventh() {
-        // C11: C3=48 E3=52 G3=55 Bb3=58 D4=62 F4=65
-        assert_eq!(chord_str(&[48, 52, 55, 58, 62, 65]), "C11");
-        
-        // Cm11: C3=48 Eb3=51 G3=55 Bb3=58 D4=62 F4=65
-        assert_eq!(chord_str(&[48, 51, 55, 58, 62, 65]), "Cm11");
-    }
-
-    #[test]
-    fn test_thirteenth() {
-        // C13 (with 11): C3=48 E3=52 G3=55 Bb3=58 D4=62 F4=65 A4=69
-        assert_eq!(chord_str(&[48, 52, 55, 58, 62, 65, 69]), "C13");
-
-        // C13 no 11
-        assert_eq!(chord_str(&[48, 52, 55, 58, 62, 69]), "C13(no11)");
-    }
-
-    #[test]
-    fn test_added_tones() {
-        // C6: C4=60 E4=64 G4=67 A4=69
-        assert_eq!(chord_str(&[60, 64, 67, 69]), "C6");
-        
-        // Cadd9: C4=60 E4=64 G4=67 D5=74
-        assert_eq!(chord_str(&[60, 64, 67, 74]), "Cadd9");
-    }
+    let mut rp = 0; let mut bi = vec![];
+    for r in 0..12 { for (m, ints, _) in modes.iter() { if format!("{} {}", pc_name(r as u8, r as u8), m) == bn { rp = r; bi = ints.clone(); } } }
+    (bn, rp as u8, bi)
 }

@@ -221,6 +221,22 @@ fn draw_ui(
                     setter.end_set_parameter(&params.show_nashville);
                 }
 
+                let mut show_rl = params.allow_rootless.value();
+                if ui.checkbox(&mut show_rl, "RL").on_hover_text("Allow Root-less Voicings (Experimental)").clicked() {
+                    setter.begin_set_parameter(&params.allow_rootless);
+                    setter.set_parameter(&params.allow_rootless, show_rl);
+                    setter.end_set_parameter(&params.allow_rootless);
+                }
+
+                ui.add_space(8.0);
+                ui.label(RichText::new("Acc:").size(12.0).color(Color32::from_rgb(120, 120, 130)));
+                let mut d_ms = params.debounce_ms.value();
+                if ui.add(egui::DragValue::new(&mut d_ms).suffix("ms").range(0..=100)).changed() {
+                    setter.begin_set_parameter(&params.debounce_ms);
+                    setter.set_parameter(&params.debounce_ms, d_ms);
+                    setter.end_set_parameter(&params.debounce_ms);
+                }
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if params.key_root.value() == crate::KeyRoot::Auto {
                         if ui.add(egui::Button::new(egui::RichText::new("Clear").size(10.0)).fill(Color32::from_rgb(40, 40, 50))).clicked() {
@@ -254,10 +270,9 @@ fn draw_ui(
                     note_job.halign = egui::Align::Center;
                     
                     for (i, (name, _role)) in notes.iter().enumerate() {
-                        // Find PC for color
                         let mut pc = 0;
                         for p in 0..12 {
-                            if name.starts_with(&crate::chord::pc_name(p)) {
+                            if name.starts_with(&crate::chord::pc_name(p, snapshot.scale_root)) {
                                 pc = p;
                             }
                         }
@@ -338,10 +353,9 @@ fn draw_ui(
                 
                 let root_name = &snapshot.chord_info.root;
                 let root_pc = if root_name.is_empty() || root_name == "–" { None } else {
-                    // Primitive but effective check for the first part of name
                     let mut found = None;
                     for p in 0..12 {
-                        if root_name.starts_with(&crate::chord::pc_name(p)) {
+                        if root_name.starts_with(&crate::chord::pc_name(p, snapshot.scale_root)) {
                             found = Some(p);
                         }
                     }

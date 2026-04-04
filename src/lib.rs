@@ -34,6 +34,8 @@
 
 mod chord;
 mod editor;
+#[cfg(test)]
+mod tests;
 
 use chord::{ChordInfo, detect};
 use editor::{EDITOR_HEIGHT, EDITOR_WIDTH};
@@ -132,6 +134,11 @@ pub struct ChordLens {
     history_midi: VecDeque<u8>,
     last_detected_key: String,
     
+    /// Timer for debouncing chord detection (in samples)
+    debounce_samples_remaining: u32,
+    /// Pending changes to active notes that haven't been "detected" yet
+    notes_changed: bool,
+    
     // Shared reset flag for the UI button
     pub reset_history: Arc<AtomicBool>,
 }
@@ -151,6 +158,12 @@ pub struct ChordLensParams {
 
     #[id = "show_nashville"]
     pub show_nashville: BoolParam,
+
+    #[id = "allow_rootless"]
+    pub allow_rootless: BoolParam,
+
+    #[id = "debounce_ms"]
+    pub debounce_ms: FloatParam,
 }
 
 impl Default for ChordLensParams {
@@ -160,6 +173,8 @@ impl Default for ChordLensParams {
             key_root: EnumParam::new("Force Root", KeyRoot::Auto),
             key_mode: EnumParam::new("Force Mode", KeyMode::Major),
             show_nashville: BoolParam::new("Nashville Numbers", true),
+            allow_rootless: BoolParam::new("Root-less Voicings (Experimental)", false),
+            debounce_ms: FloatParam::new("Accumulation (ms)", 25.0, FloatRange::Linear { min: 0.0, max: 100.0 }),
         }
     }
 }
@@ -174,6 +189,8 @@ impl Default for ChordLens {
             active_notes: HashSet::new(),
             history_midi: VecDeque::new(),
             last_detected_key: String::from("Unknown"),
+            debounce_samples_remaining: 0,
+            notes_changed: false,
             reset_history: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -269,70 +286,63 @@ impl Plugin for ChordLens {
             }
         }
 
-        // Update shared chord state only when active notes actually changed.
+        // ── Debounce Logic ───────────────────────────────────────────────────
+        let sample_rate = context.transport().sample_rate;
+        let debounce_threshold = (self.params.debounce_ms.value() / 1000.0 * sample_rate) as u32;
+
+        if changed {
+            self.notes_changed = true;
+            // Reset/Start debounce timer on every note change
+            self.debounce_samples_remaining = debounce_threshold;
+        }
+
+        let mut run_detection = false;
+        if self.notes_changed {
+            if self.debounce_samples_remaining <= _buffer.samples() as u32 {
+                self.debounce_samples_remaining = 0;
+                self.notes_changed = false;
+                run_detection = true;
+            } else {
+                self.debounce_samples_remaining -= _buffer.samples() as u32;
+            }
+        }
+
+        // Update shared chord state only when detection is triggered or history reset.
         if self.reset_history.swap(false, Ordering::Relaxed) {
             self.history_midi.clear();
             self.last_detected_key = String::from("Unknown");
-            changed = true;
+            run_detection = true;
         }
 
-        if changed {
+        if run_detection {
             let notes: Vec<u8> = self.active_notes.iter().copied().collect();
 
-            // Detect chord — pure computation, no allocation of concern
-            let chord_info = detect(&notes);
-            
             let root_param = self.params.key_root.value();
             let mode_param = self.params.key_mode.value();
             
-            let (key_text, scale_root, scale_intervals) = if root_param == KeyRoot::Auto {
-                let (auto_key, r, i) = chord::detect_scale(&self.history_midi, notes.iter().copied().min(), &self.last_detected_key);
-                self.last_detected_key = auto_key.clone();
-                (format!("Detected: {}", auto_key), r, i)
+            let (_, scale_root, scale_intervals) = if root_param == KeyRoot::Auto {
+                chord::detect_scale(&self.history_midi, notes.iter().copied().min(), &self.last_detected_key)
             } else {
                 (
-                    format!("User: {} {}", root_param.as_str(), mode_param.as_str()),
+                    String::new(),
                     root_param.pc_val(),
                     mode_param.intervals(),
                 )
             };
 
-            // Calculate Nashville Number
-            let mut nashville_text = String::new();
-            if !chord_info.root.is_empty() && chord_info.root != "–" {
-                // Find root PC of chord
-                let mut c_root_pc = 0;
-                for p in 0..12 {
-                    if chord_info.root.starts_with(&chord::pc_name(p)) {
-                        c_root_pc = p;
-                        break;
-                    }
-                }
-                
-                let rel = (c_root_pc as i32 + 12 - scale_root as i32) % 12;
-                let degree = match rel {
-                    0 => "I",
-                    1 => "bII",
-                    2 => "II",
-                    3 => "bIII",
-                    4 => "III",
-                    5 => "IV",
-                    6 => "#IV",
-                    7 => "V",
-                    8 => "bVI",
-                    9 => "VI",
-                    10 => "bVII",
-                    11 => "VII",
-                    _ => "?",
-                };
-                
-                // Common convention: lower case for minor chords
-                nashville_text = if chord_info.quality.contains('m') && !chord_info.quality.contains("maj") {
-                    degree.to_lowercase()
-                } else {
-                    degree.to_string()
-                };
-            }
+            // Detect chord with scale context for enharmonics and Roman numeral
+            let chord_info = detect(&notes, scale_root, self.params.allow_rootless.value());
+            
+            let key_text = if root_param == KeyRoot::Auto {
+                let (auto_key, _, _) = chord::detect_scale(&self.history_midi, notes.iter().copied().min(), &self.last_detected_key);
+                self.last_detected_key = auto_key.clone();
+                format!("Detected: {}", auto_key)
+            } else {
+                format!("User: {} {}", root_param.as_str(), mode_param.as_str())
+            };
+
+            // Shared degree/nash text
+            let nashville_text = chord_info.degree.clone();
 
             // Write to the shared state.
             *self.chord_state.write() = ChordState {

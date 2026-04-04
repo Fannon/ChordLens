@@ -2,6 +2,21 @@
 
 All notable changes to the **ChordLens** project will be documented in this file.
 
+## [0.1.5] - 2026-04-04
+
+### Added
+- **Extended Jazz Palette:** Support for 11th, 13th, and Altered Dominant chords (e.g., `7b9`, `7#9`, `7#11`, `9#11`, `9b13`).
+- **Key-Aware Enharmonic Naming:** Intelligent flat/sharp selection based on the detected musical key (e.g., Bb in F Major).
+- **Configurable Accumulation:** Added an **Acc: [ms]** control (0ms–100ms) to the UI to stabilize detection during live performance.
+- **Experimental Root-less Detection:** Optional toggle ("RL") to enable heuristic root inference (e.g., identifying G13 from F, A, B, E).
+- **Comprehensive Test Suite:** Decoupled unit tests into a dedicated `tests.rs` with extensive coverage for musical edge cases.
+
+### Changed
+- **Improved Nashville/Roman Numerals:** Corrected case-handling for minor, diminished, and half-diminished degrees (e.g., `ii`, `øvii`).
+- **Accurate Inversion Detection:** Refined logic to correctly name 1st, 2nd, and 3rd inversions based on the scale degree in the bass.
+- **Refined Dyad Notation:** Two-note structures are now more cleanly represented as `m(no5)` or `(no5)`.
+- **Robust Detection Engine:** Redesigned the matching heuristic to effectively handle standard jazz omissions (like the 5th).
+
 ## [0.1.4] - 2026-04-04
 
 ### Changed
