@@ -265,7 +265,7 @@ fn draw_ui(
                             name,
                             0.0,
                             egui::text::TextFormat {
-                                font_id: FontId::new(18.0, FontFamily::Proportional),
+                                font_id: FontId::new(22.0, FontFamily::Proportional),
                                 color,
                                 ..Default::default()
                             }
@@ -276,7 +276,7 @@ fn draw_ui(
                                 "  ·  ",
                                 0.0,
                                 egui::text::TextFormat {
-                                    font_id: FontId::new(18.0, FontFamily::Proportional),
+                                    font_id: FontId::new(22.0, FontFamily::Proportional),
                                     color: DIVIDER,
                                     ..Default::default()
                                 }
@@ -291,7 +291,7 @@ fn draw_ui(
                     if params.show_nashville.value() && !snapshot.nashville_text.is_empty() {
                         ui.label(
                             egui::RichText::new(&snapshot.nashville_text)
-                                .font(FontId::new(32.0, FontFamily::Proportional)) // Significantly bigger Nashville
+                                .font(FontId::new(48.0, FontFamily::Proportional)) // Significantly bigger Nashville
                                 .color(Color32::from_rgb(100, 100, 115)),
                         );
                     }
@@ -311,7 +311,7 @@ fn draw_ui(
         .show_inside(ui, |ui| {
             // Keep exactly centered relative to the remaining free space!
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                ui.add_space(ui.available_height() * 0.5 - 50.0); // manual centering roughly based on typograhpy bounds
+                ui.add_space(ui.available_height() * 0.5 - 75.0); // manual centering roughly based on typograhpy bounds
                 
                 let root_name = &snapshot.chord_info.root;
                 let root_pc = if root_name.is_empty() || root_name == "–" { None } else {
@@ -342,7 +342,7 @@ fn draw_ui(
                     root_name, 
                     0.0,
                     egui::text::TextFormat {
-                        font_id: FontId::new(96.0, FontFamily::Proportional),
+                        font_id: FontId::new(128.0, FontFamily::Proportional),
                         color: root_color,
                         ..Default::default()
                     }
@@ -353,7 +353,7 @@ fn draw_ui(
                         quality,
                         0.0,
                         egui::text::TextFormat {
-                            font_id: FontId::new(48.0, FontFamily::Proportional),
+                            font_id: FontId::new(64.0, FontFamily::Proportional),
                             color: Color32::from_rgb(180, 180, 195),
                             valign: egui::Align::Center,
                             ..Default::default()
@@ -366,7 +366,7 @@ fn draw_ui(
                         omitted,
                         4.0, // slight space
                         egui::text::TextFormat {
-                            font_id: FontId::new(24.0, FontFamily::Proportional),
+                            font_id: FontId::new(32.0, FontFamily::Proportional),
                             color: Color32::from_rgb(140, 140, 160),
                             valign: egui::Align::TOP,
                             ..Default::default()
@@ -379,7 +379,7 @@ fn draw_ui(
                         slash,
                         2.0,
                         egui::text::TextFormat {
-                            font_id: FontId::new(56.0, FontFamily::Proportional),
+                            font_id: FontId::new(72.0, FontFamily::Proportional),
                             color: SLASH_TEXT,
                             valign: egui::Align::BOTTOM,
                             ..Default::default()
