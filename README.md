@@ -2,7 +2,7 @@
 
 **ChordLens** is a clean MIDI chord and scale detector for musicians and producers. It provides clear harmonic information in your DAW, helping you identify chords, track scale changes, and use Nashville numbering in real-time.
 
-![ChordLens](assets/ChordLens.png)
+![ChordLens](assets/ChordLensPromotion.png)
 
 ## Main Features
 
