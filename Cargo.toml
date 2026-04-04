@@ -1,6 +1,6 @@
 [package]
 name = "chord-lens"
-version = "0.1.0"
+version = "0.1.4"
 edition = "2021"
 authors = ["Simon Heimler"]
 license = "MIT"
@@ -28,7 +28,6 @@ atomic_float = "0.1"
 # acceptable to *read* from the audio thread (we only *write* from the audio
 # thread and *read* from the GUI thread – never the other way round).
 parking_lot = "0.12"
-crossbeam = "0.8"
 
 [profile.release]
 lto = true
