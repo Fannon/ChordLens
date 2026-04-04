@@ -261,8 +261,15 @@ fn draw_ui(
                         
                         let color = get_note_color(pc, snapshot.scale_root, &snapshot.scale_intervals);
                         
+                        // Split name (e.g. "C#", "C#4") to color octave number in grey
+                        let (note_part, octave_part) = if let Some(first_digit) = name.find(|c: char| c.is_ascii_digit() || c == '-') {
+                            (&name[..first_digit], &name[first_digit..])
+                        } else {
+                            (name.as_str(), "")
+                        };
+
                         note_job.append(
-                            name,
+                            note_part,
                             0.0,
                             egui::text::TextFormat {
                                 font_id: FontId::new(22.0, FontFamily::Proportional),
@@ -270,6 +277,18 @@ fn draw_ui(
                                 ..Default::default()
                             }
                         );
+                        
+                        if !octave_part.is_empty() {
+                            note_job.append(
+                                octave_part,
+                                0.0,
+                                egui::text::TextFormat {
+                                    font_id: FontId::new(16.0, FontFamily::Proportional), // Slightly smaller octave
+                                    color: NOTE_OFF,
+                                    ..Default::default()
+                                }
+                            );
+                        }
                         
                         if i < notes.len() - 1 {
                             note_job.append(
@@ -338,8 +357,14 @@ fn draw_ui(
                 let mut job = egui::text::LayoutJob::default();
                 job.halign = egui::Align::Center;
                 
+                let (root_note, root_octave) = if let Some(first_digit) = root_name.find(|c: char| c.is_ascii_digit() || c == '-') {
+                    (&root_name[..first_digit], &root_name[first_digit..])
+                } else {
+                    (root_name.as_str(), "")
+                };
+
                 job.append(
-                    root_name, 
+                    root_note, 
                     0.0,
                     egui::text::TextFormat {
                         font_id: FontId::new(128.0, FontFamily::Proportional),
@@ -347,6 +372,19 @@ fn draw_ui(
                         ..Default::default()
                     }
                 );
+                
+                if !root_octave.is_empty() {
+                    job.append(
+                        root_octave, 
+                        0.0,
+                        egui::text::TextFormat {
+                            font_id: FontId::new(80.0, FontFamily::Proportional), // Large but smaller than the root
+                            color: NOTE_OFF,
+                            valign: egui::Align::Center,
+                            ..Default::default()
+                        }
+                    );
+                }
 
                 if !quality.is_empty() {
                     job.append(
