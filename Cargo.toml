@@ -1,0 +1,36 @@
+[package]
+name = "chord-lens"
+version = "0.1.0"
+edition = "2021"
+authors = ["chord-lens contributors"]
+description = "A real-time MIDI chord detector plugin (VST3/CLAP)"
+
+[lib]
+# cdylib = the plugin shared library; lib = needed for the standalone binary target
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+# Core nih-plug framework – pulled directly from git so we always get the latest
+# stable API.  Pin to a specific rev in production.
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = [
+    "assert_process_allocs",
+    "standalone",
+] }
+
+# egui GUI integration shipped alongside nih-plug
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+
+# Atomic f32 – used for nothing yet but left here for future metering widgets
+atomic_float = "0.1"
+
+# parking_lot RwLock is non-allocating on the uncontended fast path, making it
+# acceptable to *read* from the audio thread (we only *write* from the audio
+# thread and *read* from the GUI thread – never the other way round).
+parking_lot = "0.12"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "z"
+strip = true
+panic = "abort"

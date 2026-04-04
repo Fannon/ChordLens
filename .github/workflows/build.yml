@@ -1,0 +1,85 @@
+name: Build Plugins
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Linux Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libgl-dev libx11-dev libxcursor-dev libxi-dev libxkbcommon-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+          
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        
+      - name: Run theory tests (lib)
+        run: cargo test --lib
+
+  build:
+    name: Build (${{ matrix.os-name }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            os-name: windows
+            target-path: target/release/chord_lens.dll
+            vst3-name: chord_lens.vst3
+          - os: macos-latest
+            os-name: macos
+            target-path: target/release/libchord_lens.dylib
+            vst3-name: chord_lens.vst3
+          - os: ubuntu-latest
+            os-name: linux
+            target-path: target/release/libchord_lens.so
+            vst3-name: chord_lens.vst3
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Linux Dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libgl-dev libx11-dev libxcursor-dev libxi-dev libxkbcommon-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        
+      - name: Build Release
+        run: cargo build --release
+        
+      - name: Bundle Artifacts
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          
+          # The raw dynamic library
+          cp "${{ matrix.target-path }}" "artifacts/chord_lens_${{ matrix.os-name }}_raw"
+          
+          # CLAP plugin format
+          cp "${{ matrix.target-path }}" "artifacts/chord_lens_${{ matrix.os-name }}.clap"
+          
+          # VST3 plugin format (Some basic hosts accept the raw binary renamed)
+          cp "${{ matrix.target-path }}" "artifacts/${{ matrix.vst3-name }}"
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: chord-lens-${{ matrix.os-name }}
+          path: artifacts/*

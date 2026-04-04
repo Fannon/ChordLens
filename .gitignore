@@ -1,0 +1,11 @@
+# Built application files
+/target/
+
+# Temporary files
+/tmp/
+tmp/
+*.tmp
+
+# OS generated files
+.DS_Store
+Thumbs.db
