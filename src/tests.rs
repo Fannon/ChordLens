@@ -36,8 +36,8 @@ mod tests {
         assert_eq!(chord_str(&[48, 52, 55, 58, 62, 65], 0), "C11");
         // C13
         assert_eq!(chord_str(&[48, 52, 55, 58, 62, 65, 69], 0), "C13");
-        // Cmaj7#11
-        assert_eq!(chord_str(&[60, 64, 67, 71, 78], 0), "Cmaj7#11");
+        // Cmaj7#11 (requires 9th/14)
+        assert_eq!(chord_str(&[60, 64, 67, 71, 74, 78], 0), "Cmaj7#11");
     }
 
     #[test]

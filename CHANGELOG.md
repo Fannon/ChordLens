@@ -2,6 +2,19 @@
 
 All notable changes to the **ChordLens** project will be documented in this file.
 
+## [0.1.6] - 2026-04-04
+
+### Added
+- **Seamless Layout:** Redesigned the UI architecture to use a single-panel layout, resolving visual background gaps.
+- **Dynamic View Toggle:** Replaced the "H" button with a label that changes between "History" and "Notes" to reflect the current view.
+- **Improved Legibility:** Inversion hints (e.g. "1st inv.") are now larger (14px) and use a regular font style.
+
+### Changed
+- **Unified Controls:** Standardized the height of all buttons and dropdowns to 22px for consistent alignment.
+- **Improved Spacing:** Added padding for Nashville numbers and adjusted header margins to prevent text from clipping at window edges.
+- **Simplified Parameters:** Shortened DAW parameter names for cleaner integration (e.g., "Chord History" and "Root-less Voicings").
+- **Compact History View:** Adjusted margins in the history panel to display more harmonic data at once.
+
 ## [0.1.5] - 2026-04-04
 
 ### Added

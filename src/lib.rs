@@ -2,10 +2,10 @@
 //!
 //! ## Architecture
 //!
-//! ```
+//! ```text
 //!  ┌──────────────────────────────────────────────┐
 //!  │              Host DAW / plugin runner         │
-//!  │                                               │
+//!                                                  │
 //!  │  ┌──────────────┐       ┌───────────────────┐ │
 //!  │  │  Audio/MIDI  │       │   GUI Thread      │ │
 //!  │  │  Thread      │       │  (egui editor)    │ │
@@ -29,8 +29,6 @@
 //!  - Active MIDI note numbers are stored in a `HashSet<u8>`.
 //!  - On every note event, `chord::detect()` rebuilds the `ChordInfo`.
 //!  - The new `ChordInfo` is written to `ChordState` under the write-lock.
-
-#![allow(non_snake_case)] // nih-plug macros use non-snake names
 
 mod chord;
 mod editor;
@@ -107,10 +105,14 @@ impl KeyMode {
     }
 }
 
-// ─── Shared state between audio thread and GUI ────────────────────────────────
+#[derive(Clone, Default)]
+pub struct ChordHistoryEntry {
+    pub root: String,
+    pub quality: String,
+    pub omitted: String,
+    pub slash: String,
+}
 
-/// The single piece of data that crosses the audio↔GUI thread boundary.
-/// Written by `process()`, read by the egui paint callback.
 #[derive(Clone, Default)]
 pub struct ChordState {
     pub chord_info: ChordInfo,
@@ -118,52 +120,38 @@ pub struct ChordState {
     pub scale_root: u8,
     pub scale_intervals: Vec<i32>,
     pub nashville_text: String,
+    pub chord_history: Vec<ChordHistoryEntry>,
 }
-
-// ─── Plugin struct ────────────────────────────────────────────────────────────
 
 pub struct ChordLens {
     params: Arc<ChordLensParams>,
-
-    /// Chord information written by the audio thread, read by the GUI.
     chord_state: Arc<RwLock<ChordState>>,
-
-    /// MIDI note numbers currently held down.  Lives only on the audio thread,
-    /// so no synchronisation needed.
     active_notes: HashSet<u8>,
     history_midi: VecDeque<u8>,
     last_detected_key: String,
-    
-    /// Timer for debouncing chord detection (in samples)
     debounce_samples_remaining: u32,
-    /// Pending changes to active notes that haven't been "detected" yet
     notes_changed: bool,
-    
-    // Shared reset flag for the UI button
+    history_chords: VecDeque<ChordHistoryEntry>,
+    last_pushed_chord: String,
+    current_stable_chord: String,
+    stable_samples: u32,
     pub reset_history: Arc<AtomicBool>,
 }
-
-// ─── Parameters ──────────────────────────────────────────────────────────────
 
 #[derive(Params)]
 pub struct ChordLensParams {
     #[persist = "editor-state"]
     pub editor_state: Arc<EguiState>,
-    
     #[id = "force_r"]
     pub key_root: EnumParam<KeyRoot>,
-    
     #[id = "force_m"]
     pub key_mode: EnumParam<KeyMode>,
-
     #[id = "show_nashville"]
     pub show_nashville: BoolParam,
-
     #[id = "allow_rootless"]
     pub allow_rootless: BoolParam,
-
-    #[id = "debounce_ms"]
-    pub debounce_ms: FloatParam,
+    #[id = "show_history"]
+    pub show_history: BoolParam,
 }
 
 impl Default for ChordLensParams {
@@ -173,13 +161,11 @@ impl Default for ChordLensParams {
             key_root: EnumParam::new("Force Root", KeyRoot::Auto),
             key_mode: EnumParam::new("Force Mode", KeyMode::Major),
             show_nashville: BoolParam::new("Nashville Numbers", true),
-            allow_rootless: BoolParam::new("Root-less Voicings (Experimental)", false),
-            debounce_ms: FloatParam::new("Accumulation (ms)", 25.0, FloatRange::Linear { min: 0.0, max: 100.0 }),
+            allow_rootless: BoolParam::new("Root-less Voicings", false),
+            show_history: BoolParam::new("Chord History", false),
         }
     }
 }
-
-// ─── Plugin wiring ────────────────────────────────────────────────────────────
 
 impl Default for ChordLens {
     fn default() -> Self {
@@ -191,6 +177,10 @@ impl Default for ChordLens {
             last_detected_key: String::from("Unknown"),
             debounce_samples_remaining: 0,
             notes_changed: false,
+            history_chords: VecDeque::new(),
+            last_pushed_chord: String::new(),
+            current_stable_chord: String::new(),
+            stable_samples: 0,
             reset_history: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -201,98 +191,49 @@ impl Plugin for ChordLens {
     const VENDOR: &'static str = "Simon Heimler";
     const URL: &'static str = "https://github.com/Fannon/ChordLens";
     const EMAIL: &'static str = "simon@heimler.de";
-
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
-
-    // ── MIDI-only: no audio I/O ───────────────────────────────────────────────
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[];
-
-    // We need NoteOn / NoteOff; MidiCCs gives us those plus CC messages.
-    // If the host supports MIDI2-style note expressions we still handle them
-    // through the NoteOn/NoteOff arms below.
     const MIDI_INPUT: MidiConfig = MidiConfig::MidiCCs;
-    // Pass events through transparently so ChordLens is non-destructive.
     const MIDI_OUTPUT: MidiConfig = MidiConfig::MidiCCs;
-
     const SAMPLE_ACCURATE_AUTOMATION: bool = false;
-
     type SysExMessage = ();
     type BackgroundTask = ();
 
-    fn params(&self) -> Arc<dyn Params> {
-        self.params.clone()
-    }
-
-    // ── Editor ────────────────────────────────────────────────────────────────
-
+    fn params(&self) -> Arc<dyn Params> { self.params.clone() }
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        editor::create(
-            self.params.clone(),
-            self.chord_state.clone(),
-            self.reset_history.clone(),
-        )
+        editor::create(self.params.clone(), self.chord_state.clone(), self.reset_history.clone())
     }
 
-    // ── Process (MIDI event loop) ─────────────────────────────────────────────
-
-    fn process(
-        &mut self,
-        _buffer: &mut Buffer,
-        _aux: &mut AuxiliaryBuffers,
-        context: &mut impl ProcessContext<Self>,
-    ) -> ProcessStatus {
-        // Track whether the active note set changed this buffer so we only
-        // run chord detection (and acquire the write-lock) when necessary.
+    fn process(&mut self, _buffer: &mut Buffer, _aux: &mut AuxiliaryBuffers, context: &mut impl ProcessContext<Self>) -> ProcessStatus {
         let mut changed = false;
-
         while let Some(event) = context.next_event() {
             match event {
-                // ── Note ON ───────────────────────────────────────────────────
                 NoteEvent::NoteOn { note, velocity, .. } => {
                     if velocity > 0.0 {
                         self.active_notes.insert(note);
                         changed = true;
-                        
-                        // Push to history (32 notes)
                         self.history_midi.push_back(note);
-                        if self.history_midi.len() > 32 {
-                            self.history_midi.pop_front();
-                        }
+                        if self.history_midi.len() > 32 { self.history_midi.pop_front(); }
                     } else {
                         self.active_notes.remove(&note);
                         changed = true;
                     }
                     context.send_event(event);
                 }
-
-                // ── Note OFF (and zero-velocity NoteOn which is a NoteOff) ──
-                NoteEvent::NoteOff { note, .. } => {
+                NoteEvent::NoteOff { note, .. } | NoteEvent::Choke { note, .. } => {
                     self.active_notes.remove(&note);
                     changed = true;
                     context.send_event(event);
                 }
-
-                // ── Choke (all notes off for a voice) ────────────────────────
-                NoteEvent::Choke { note, .. } => {
-                    self.active_notes.remove(&note);
-                    changed = true;
-                    context.send_event(event);
-                }
-
-                // ── All other events pass through unchanged ───────────────────
-                other => {
-                    context.send_event(other);
-                }
+                other => { context.send_event(other); }
             }
         }
 
-        // ── Debounce Logic ───────────────────────────────────────────────────
         let sample_rate = context.transport().sample_rate;
-        let debounce_threshold = (self.params.debounce_ms.value() / 1000.0 * sample_rate) as u32;
+        let debounce_threshold = (0.025 * sample_rate) as u32; // Fixed 25ms internal debounce
 
         if changed {
             self.notes_changed = true;
-            // Reset/Start debounce timer on every note change
             self.debounce_samples_remaining = debounce_threshold;
         }
 
@@ -307,32 +248,27 @@ impl Plugin for ChordLens {
             }
         }
 
-        // Update shared chord state only when detection is triggered or history reset.
         if self.reset_history.swap(false, Ordering::Relaxed) {
             self.history_midi.clear();
+            self.history_chords.clear();
+            self.last_pushed_chord.clear();
+            self.current_stable_chord.clear();
             self.last_detected_key = String::from("Unknown");
             run_detection = true;
         }
 
         if run_detection {
             let notes: Vec<u8> = self.active_notes.iter().copied().collect();
-
             let root_param = self.params.key_root.value();
             let mode_param = self.params.key_mode.value();
             
             let (_, scale_root, scale_intervals) = if root_param == KeyRoot::Auto {
                 chord::detect_scale(&self.history_midi, notes.iter().copied().min(), &self.last_detected_key)
             } else {
-                (
-                    String::new(),
-                    root_param.pc_val(),
-                    mode_param.intervals(),
-                )
+                (String::new(), root_param.pc_val(), mode_param.intervals())
             };
 
-            // Detect chord with scale context for enharmonics and Roman numeral
             let chord_info = detect(&notes, scale_root, self.params.allow_rootless.value());
-            
             let key_text = if root_param == KeyRoot::Auto {
                 let (auto_key, _, _) = chord::detect_scale(&self.history_midi, notes.iter().copied().min(), &self.last_detected_key);
                 self.last_detected_key = auto_key.clone();
@@ -341,42 +277,75 @@ impl Plugin for ChordLens {
                 format!("User: {} {}", root_param.as_str(), mode_param.as_str())
             };
 
-            // Shared degree/nash text
             let nashville_text = chord_info.degree.clone();
+            let current_full_name = format!("{}", chord_info);
 
-            // Write to the shared state.
+            if current_full_name != self.current_stable_chord {
+                self.current_stable_chord = current_full_name;
+                self.stable_samples = 0;
+            } else {
+                let threshold = (0.12 * sample_rate) as u32; // 120ms stability threshold
+                self.stable_samples += _buffer.samples() as u32;
+                if self.stable_samples >= threshold && self.current_stable_chord != self.last_pushed_chord && !self.current_stable_chord.is_empty() && self.current_stable_chord != "–" {
+                    self.history_chords.push_back(ChordHistoryEntry {
+                        root: chord_info.root.clone(),
+                        quality: chord_info.quality.clone(),
+                        omitted: chord_info.omitted.clone(),
+                        slash: chord_info.slash.clone(),
+                    });
+                    if self.history_chords.len() > 16 { self.history_chords.pop_front(); }
+                    self.last_pushed_chord = self.current_stable_chord.clone();
+                }
+            }
+
             *self.chord_state.write() = ChordState {
                 chord_info,
                 key_text,
                 scale_root,
                 scale_intervals,
                 nashville_text,
+                chord_history: self.history_chords.iter().cloned().collect(),
             };
+        } else {
+            // Even if we didn't run full detection, update stability for history tracking
+            let cur_info = self.chord_state.read().chord_info.clone();
+            let name = format!("{}", cur_info);
+            if name != self.current_stable_chord {
+                self.current_stable_chord = name;
+                self.stable_samples = 0;
+            } else {
+                let threshold = (0.12 * sample_rate) as u32; // 120ms
+                self.stable_samples += _buffer.samples() as u32;
+                if self.stable_samples >= threshold && self.current_stable_chord != self.last_pushed_chord && !self.current_stable_chord.is_empty() && self.current_stable_chord != "–" {
+                    self.history_chords.push_back(ChordHistoryEntry {
+                        root: cur_info.root.clone(),
+                        quality: cur_info.quality.clone(),
+                        omitted: cur_info.omitted.clone(),
+                        slash: cur_info.slash.clone(),
+                    });
+                    if self.history_chords.len() > 16 { self.history_chords.pop_front(); }
+                    self.last_pushed_chord = self.current_stable_chord.clone();
+                    let mut state = self.chord_state.write();
+                    state.chord_history = self.history_chords.iter().cloned().collect();
+                }
+            }
         }
 
         ProcessStatus::Normal
     }
 }
 
-// ─── Plugin exports ───────────────────────────────────────────────────────────
-
 impl ClapPlugin for ChordLens {
     const CLAP_ID: &'static str = "io.github.chord-lens.chord-lens";
-    const CLAP_DESCRIPTION: Option<&'static str> =
-        Some("Real-time MIDI chord detector with egui display");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Real-time MIDI chord detector with egui display");
     const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
-    const CLAP_FEATURES: &'static [ClapFeature] = &[
-        ClapFeature::NoteEffect,
-        ClapFeature::Analyzer,
-        ClapFeature::Utility,
-    ];
+    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::NoteEffect, ClapFeature::Analyzer, ClapFeature::Utility];
 }
 
 impl Vst3Plugin for ChordLens {
     const VST3_CLASS_ID: [u8; 16] = *b"ChordLens_000001";
-    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
-        &[Vst3SubCategory::Fx, Vst3SubCategory::Tools, Vst3SubCategory::Analyzer];
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Fx, Vst3SubCategory::Tools, Vst3SubCategory::Analyzer];
 }
 
 nih_export_clap!(ChordLens);

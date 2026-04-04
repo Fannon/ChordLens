@@ -1,20 +1,14 @@
 //! # editor.rs — egui GUI for ChordLens
 //!
 //! Reads chord state written by the audio thread and renders it using egui.
-//! Deliberately minimalistic: large chord name, smaller note list, subtle
-//! inversion hint.  All layout is done with egui's built-in layout system;
-//! no textures or images are used so the plugin has zero asset dependencies.
-
-use crate::ChordState;
 
 use nih_plug_egui::{
     create_egui_editor,
-    egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, RichText, Vec2},
+    egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, RichText, Vec2, Pos2},
     EguiState,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-// ─── Palette ──────────────────────────────────────────────────────────────────
 
 const BG: Color32 = Color32::from_rgb(13, 13, 18);
 const CHORD_TEXT: Color32 = Color32::from_rgb(245, 245, 250);
@@ -23,53 +17,22 @@ const NOTE_TEXT: Color32 = Color32::from_rgb(140, 140, 160);
 const INV_TEXT: Color32 = Color32::from_rgb(130, 130, 140);
 const DIVIDER: Color32 = Color32::from_rgb(60, 60, 75);
 
-/// Toggles whether octave numbers are displayed in a subtle grey or in the scale color.
 const SHOW_GREY_OCTAVES: bool = false;
-
-// ─── Widget sizes ─────────────────────────────────────────────────────────────
 
 pub const EDITOR_WIDTH: u32 = 480;
 pub const EDITOR_HEIGHT: u32 = 300;
 
-// ─── Font setup ──────────────────────────────────────────────────────────────
-
-/// Register the bundled Inter font so we're not at the mercy of the host's
-/// system fonts.  The font bytes are baked into the binary at compile time.
-///
-/// Inter is released under the SIL Open Font License 1.1.
 static INTER_REGULAR: &[u8] = include_bytes!("../assets/Inter-Regular.ttf");
 static INTER_LIGHT: &[u8] = include_bytes!("../assets/Inter-Light.ttf");
 
 fn setup_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
-
-    fonts.font_data.insert(
-        "Inter-Regular".to_owned(),
-        Arc::new(FontData::from_static(INTER_REGULAR)),
-    );
-    fonts
-        .font_data
-        .insert("Inter-Light".to_owned(), Arc::new(FontData::from_static(INTER_LIGHT)));
-
-    // Make Inter the *first* choice for proportional text
-    fonts
-        .families
-        .entry(FontFamily::Proportional)
-        .or_default()
-        .insert(0, "Inter-Regular".to_owned());
-
+    fonts.font_data.insert("Inter-Regular".to_owned(), Arc::new(FontData::from_static(INTER_REGULAR)));
+    fonts.font_data.insert("Inter-Light".to_owned(), Arc::new(FontData::from_static(INTER_LIGHT)));
+    fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "Inter-Regular".to_owned());
     ctx.set_fonts(fonts);
 }
 
-// ─── Editor factory ──────────────────────────────────────────────────────────
-
-/// Build the egui editor.  Called once per window open by nih-plug.
-///
-/// `chord_state` is an `Arc<RwLock<ChordState>>` written exclusively from the
-/// audio thread (the `process()` function) and read here on the GUI thread.
-/// Because the audio thread **only writes** and the GUI thread **only reads**,
-/// and `parking_lot::RwLock` never allocates on the uncontended fast path,
-/// this is safe and performant.
 pub fn create(
     params: Arc<crate::ChordLensParams>,
     chord_state: Arc<parking_lot::RwLock<crate::ChordState>>,
@@ -85,37 +48,23 @@ pub fn create(
             style_egui(ctx);
         },
         move |ctx, setter, _state| {
-            // Take a lightweight read-lock to snapshot the current chord state
-            // so we don't hold the lock while rendering UI commands.
             let snapshot = chord_state.read().clone();
-            
-            egui::CentralPanel::default()
-                .frame(egui::Frame::NONE.fill(BG))
-                .show(ctx, |ui| {
-                    draw_ui(ui, setter, &params, &snapshot, &reset_history, &rs_state);
-                });
+            draw_ui(ctx, setter, &params, &snapshot, &reset_history, &rs_state);
         },
     )
 }
 
-// ─── Styling ─────────────────────────────────────────────────────────────────
-
 fn style_egui(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
-
-    // Transparent windows / panels
     style.visuals.window_fill = BG;
     style.visuals.panel_fill = BG;
     style.visuals.faint_bg_color = BG;
     style.visuals.extreme_bg_color = BG;
     style.visuals.widgets.noninteractive.bg_fill = BG;
-
-    // No strokes/shadows
     style.visuals.window_shadow = egui::Shadow::NONE;
     style.visuals.popup_shadow = egui::Shadow::NONE;
-
-    style.spacing.item_spacing = Vec2::new(0.0, 0.0);
-
+    style.spacing.item_spacing = Vec2::ZERO;
+    style.spacing.window_margin = egui::Margin::ZERO;
     ctx.set_style(style);
 }
 
@@ -123,339 +72,176 @@ const NOTE_OFF: Color32 = Color32::from_rgb(100, 100, 110);
 
 fn get_note_color(pc: u8, scale_root: u8, scale_intervals: &[i32]) -> Color32 {
     let rel = (pc as i32 + 12 - scale_root as i32) % 12;
-    
-    // Cohesive Hue-Shifted Palette (Harmonious Pastels centered on Mint)
-    // Tonic is the original project teal.
-    if rel == 0 { return Color32::from_rgb(120, 220, 180); } // 1 (Mint)
-    if rel == 2 { return Color32::from_rgb(120, 200, 220); } // 2 (Aqua)
-    if rel == 4 || rel == 3 { return Color32::from_rgb(150, 180, 240); } // 3 (Soft Blue)
-    if rel == 5 { return Color32::from_rgb(190, 160, 240); } // 4 (Lavender)
-    if rel == 7 { return Color32::from_rgb(230, 160, 230); } // 5 (Rose)
-    if rel == 9 || rel == 8 { return Color32::from_rgb(245, 180, 180); } // 6 (Salmon)
-    if rel == 11 || rel == 10 { return Color32::from_rgb(235, 210, 150); } // 7 (Amber)
-
-    // Falls into scale but not a primary degree? Check intervals
-    if scale_intervals.contains(&rel) {
-        return NOTE_TEXT; // Fallback
-    }
-
-    NOTE_OFF // Out of scale (Grey)
+    if rel == 0 { return Color32::from_rgb(120, 220, 180); }
+    if rel == 2 { return Color32::from_rgb(120, 200, 220); }
+    if rel == 4 || rel == 3 { return Color32::from_rgb(150, 180, 240); }
+    if rel == 5 { return Color32::from_rgb(190, 160, 240); }
+    if rel == 7 { return Color32::from_rgb(230, 160, 230); }
+    if rel == 9 || rel == 8 { return Color32::from_rgb(245, 180, 180); }
+    if rel == 11 || rel == 10 { return Color32::from_rgb(235, 210, 150); }
+    if scale_intervals.contains(&rel) { return NOTE_TEXT; }
+    NOTE_OFF
 }
 
-// ─── Frame drawing ────────────────────────────────────────────────────────────
-
 fn draw_ui(
-    ui: &mut egui::Ui, 
+    ctx: &egui::Context, 
     setter: &nih_plug::prelude::ParamSetter, 
     params: &Arc<crate::ChordLensParams>, 
-    snapshot: &ChordState,
+    snapshot: &crate::ChordState,
     reset_history: &Arc<AtomicBool>,
     _egui_state: &Arc<EguiState>,
 ) {
-    // ── Top Bar (Key Detection) ──
-    egui::TopBottomPanel::top("top_bar_panel")
-        .frame(egui::Frame::NONE.inner_margin(egui::Margin::same(12i8)))
-        .show_separator_line(false)
-        .show_inside(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.visuals_mut().widgets.inactive.bg_fill = Color32::TRANSPARENT;
-                ui.visuals_mut().widgets.hovered.bg_fill = Color32::from_rgb(30, 30, 40);
-                
-                let mut root = params.key_root.value();
-                let r_changed = egui::ComboBox::from_id_salt("root_cmb")
-                    .selected_text(root.as_str())
-                    .show_ui(ui, |ui| {
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE.fill(BG))
+        .show(ctx, |ui| {
+            let full_rect = ui.available_rect_before_wrap();
+            
+            // ── Header Section (45px) ──
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(full_rect.min, Vec2::new(full_rect.width(), 45.0))), |ui| {
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(12.0);
+                    ui.visuals_mut().widgets.inactive.bg_fill = Color32::TRANSPARENT;
+                    ui.visuals_mut().widgets.hovered.bg_fill = Color32::from_rgb(40, 40, 50);
+                    
+                    let mut root = params.key_root.value();
+                    let r_changed = egui::ComboBox::from_id_salt("root_cmb").selected_text(root.as_str()).width(62.0).show_ui(ui, |ui| {
                         let mut changed = false;
-                        for r in [
-                            crate::KeyRoot::Auto, crate::KeyRoot::C, crate::KeyRoot::CSharp, 
-                            crate::KeyRoot::D, crate::KeyRoot::DSharp, crate::KeyRoot::E, 
-                            crate::KeyRoot::F, crate::KeyRoot::FSharp, crate::KeyRoot::G, 
-                            crate::KeyRoot::GSharp, crate::KeyRoot::A, crate::KeyRoot::ASharp, crate::KeyRoot::B
-                        ] {
-                            if ui.selectable_label(root == r, r.as_str()).clicked() {
-                                root = r;
-                                changed = true;
-                            }
+                        for r in [crate::KeyRoot::Auto, crate::KeyRoot::C, crate::KeyRoot::CSharp, crate::KeyRoot::D, crate::KeyRoot::DSharp, crate::KeyRoot::E, crate::KeyRoot::F, crate::KeyRoot::FSharp, crate::KeyRoot::G, crate::KeyRoot::GSharp, crate::KeyRoot::A, crate::KeyRoot::ASharp, crate::KeyRoot::B] {
+                            if ui.selectable_label(root == r, r.as_str()).clicked() { root = r; changed = true; }
                         }
                         changed
                     }).inner.unwrap_or(false);
+                    if r_changed { setter.begin_set_parameter(&params.key_root); setter.set_parameter(&params.key_root, root); setter.end_set_parameter(&params.key_root); }
+                    ui.add_space(4.0);
+                    
+                    let show_h = params.show_history.value();
+                    let h_fill = if show_h { Color32::from_rgb(60, 60, 75) } else { Color32::from_rgb(45, 45, 55) };
+                    let h_text = if show_h { Color32::from_rgb(220, 220, 230) } else { Color32::from_rgb(200, 200, 210) };
+                    let h_label = if show_h { "Notes" } else { "History" };
+                    let h_btn = egui::Button::new(egui::RichText::new(h_label).size(11.0).color(h_text)).fill(h_fill).min_size(Vec2::new(52.0, 22.0));
 
-                if r_changed {
-                    setter.begin_set_parameter(&params.key_root);
-                    setter.set_parameter(&params.key_root, root);
-                    setter.end_set_parameter(&params.key_root);
-                }
-                
-                if root != crate::KeyRoot::Auto {
-                    let mut mode = params.key_mode.value();
-                    let m_changed = egui::ComboBox::from_id_salt("mode_cmb")
-                        .selected_text(mode.as_str())
-                        .show_ui(ui, |ui| {
+                    if root == crate::KeyRoot::Auto {
+                        ui.label(egui::RichText::new(&snapshot.key_text).color(Color32::from_rgb(120, 120, 130)).size(16.0));
+                        ui.add_space(8.0);
+                        if ui.add(egui::Button::new(egui::RichText::new("Clear").size(11.0)).fill(Color32::from_rgb(45, 45, 55)).min_size(Vec2::new(42.0, 22.0))).clicked() { reset_history.store(true, Ordering::Relaxed); }
+                        ui.add_space(4.0); // 4px padding between Clear and History
+                        if ui.add(h_btn).clicked() {
+                            setter.begin_set_parameter(&params.show_history); setter.set_parameter(&params.show_history, !show_h); setter.end_set_parameter(&params.show_history); 
+                        }
+                    } else {
+                        let mut mode = params.key_mode.value();
+                        let m_changed = egui::ComboBox::from_id_salt("mode_cmb").selected_text(mode.as_str()).width(82.0).show_ui(ui, |ui| {
                             let mut changed = false;
-                            for m in [
-                                crate::KeyMode::Major, crate::KeyMode::Minor, crate::KeyMode::Dorian,
-                                crate::KeyMode::Phrygian, crate::KeyMode::Lydian, crate::KeyMode::Mixolydian,
-                                crate::KeyMode::Locrian
-                            ] {
-                                if ui.selectable_label(mode == m, m.as_str()).clicked() {
-                                    mode = m;
-                                    changed = true;
-                                }
+                            for i in [crate::KeyMode::Major, crate::KeyMode::Minor, crate::KeyMode::Dorian, crate::KeyMode::Phrygian, crate::KeyMode::Lydian, crate::KeyMode::Mixolydian, crate::KeyMode::Locrian] {
+                                if ui.selectable_label(mode == i, i.as_str()).clicked() { mode = i; changed = true; }
                             }
                             changed
                         }).inner.unwrap_or(false);
-
-                    if m_changed {
-                        setter.begin_set_parameter(&params.key_mode);
-                        setter.set_parameter(&params.key_mode, mode);
-                        setter.end_set_parameter(&params.key_mode);
-                    }
-                }
-
-                // Nashville Toggle
-                ui.add_space(8.0);
-                let mut show_n = params.show_nashville.value();
-                if ui.checkbox(&mut show_n, "N").clicked() {
-                    setter.begin_set_parameter(&params.show_nashville);
-                    setter.set_parameter(&params.show_nashville, show_n);
-                    setter.end_set_parameter(&params.show_nashville);
-                }
-
-                let mut show_rl = params.allow_rootless.value();
-                if ui.checkbox(&mut show_rl, "RL").on_hover_text("Allow Root-less Voicings (Experimental)").clicked() {
-                    setter.begin_set_parameter(&params.allow_rootless);
-                    setter.set_parameter(&params.allow_rootless, show_rl);
-                    setter.end_set_parameter(&params.allow_rootless);
-                }
-
-                ui.add_space(8.0);
-                ui.label(RichText::new("Acc:").size(12.0).color(Color32::from_rgb(120, 120, 130)));
-                let mut d_ms = params.debounce_ms.value();
-                if ui.add(egui::DragValue::new(&mut d_ms).suffix("ms").range(0..=100)).changed() {
-                    setter.begin_set_parameter(&params.debounce_ms);
-                    setter.set_parameter(&params.debounce_ms, d_ms);
-                    setter.end_set_parameter(&params.debounce_ms);
-                }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if params.key_root.value() == crate::KeyRoot::Auto {
-                        if ui.add(egui::Button::new(egui::RichText::new("Clear").size(10.0)).fill(Color32::from_rgb(40, 40, 50))).clicked() {
-                            reset_history.store(true, Ordering::Relaxed);
-                        }
+                        if m_changed { setter.begin_set_parameter(&params.key_mode); setter.set_parameter(&params.key_mode, mode); setter.end_set_parameter(&params.key_mode); }
                         ui.add_space(8.0);
+                        if ui.add(h_btn).clicked() {
+                            setter.begin_set_parameter(&params.show_history); setter.set_parameter(&params.show_history, !show_h); setter.end_set_parameter(&params.show_history); 
+                        }
                     }
-                    ui.label(egui::RichText::new(&snapshot.key_text).color(Color32::from_rgb(120, 120, 130)).size(16.0));
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                        ui.add_space(14.0); // Extreme right padding
+                        ui.vertical(|ui| {
+                            ui.add_space(2.0); // Push text down a bit to align with header items
+                            let inv = &snapshot.chord_info.inversion;
+                            if !inv.is_empty() && inv.to_lowercase() != "root pos" {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(egui::RichText::new(inv).color(Color32::from_rgb(100, 100, 110)).font(FontId::new(14.0, FontFamily::Proportional)));
+                                });
+                            }
+                        });
+                    });
                 });
             });
-        });
 
-    // ── Bottom Box (Active Notes) ──
-    egui::TopBottomPanel::bottom("bottom_bar_panel")
-        .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(14i8, 16i8)))
-        .exact_height(70.0) // Compact bottom bar
-        .show_separator_line(false)
-        .show_inside(ui, |ui| {
-            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                ui.add_space(4.0);
+            // ── Main Content Area ──
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(Pos2::new(full_rect.min.x, full_rect.min.y + 45.0), Pos2::new(full_rect.max.x, full_rect.max.y - 75.0))), |ui| {
+                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                    ui.add_space(15.0);
+                    let root_name = &snapshot.chord_info.root;
+                    let root_pc = if root_name.is_empty() || root_name == "–" { None } else {
+                        let mut found = None;
+                        for p in 0..12 { if root_name.starts_with(&crate::chord::pc_name(p, snapshot.scale_root)) { found = Some(p); } }
+                        found
+                    };
+                    let root_color = if let Some(p) = root_pc { get_note_color(p, snapshot.scale_root, &snapshot.scale_intervals) } else { CHORD_TEXT };
+                    let mut job = egui::text::LayoutJob::default();
+                    job.halign = egui::Align::Center;
+                    let (root_note, root_octave) = if let Some(first_digit) = root_name.find(|c: char| c.is_ascii_digit() || c == '-') { (&root_name[..first_digit], &root_name[first_digit..]) } else { (root_name.as_str(), "") };
+                    job.append(root_note, 0.0, egui::text::TextFormat { font_id: FontId::new(128.0, FontFamily::Proportional), color: root_color, ..Default::default() });
+                    if !root_octave.is_empty() { job.append(root_octave, 0.0, egui::text::TextFormat { font_id: FontId::new(128.0, FontFamily::Proportional), color: root_color, valign: egui::Align::Center, ..Default::default() }); }
+                    if !snapshot.chord_info.quality.is_empty() { job.append(&snapshot.chord_info.quality, 0.0, egui::text::TextFormat { font_id: FontId::new(64.0, FontFamily::Proportional), color: Color32::from_rgb(180, 180, 195), valign: egui::Align::Center, ..Default::default() }); }
+                    if !snapshot.chord_info.omitted.is_empty() { job.append(&snapshot.chord_info.omitted, 4.0, egui::text::TextFormat { font_id: FontId::new(32.0, FontFamily::Proportional), color: Color32::from_rgb(140, 140, 160), valign: egui::Align::TOP, ..Default::default() }); }
+                    if !snapshot.chord_info.slash.is_empty() { job.append(&snapshot.chord_info.slash, 2.0, egui::text::TextFormat { font_id: FontId::new(72.0, FontFamily::Proportional), color: SLASH_TEXT, valign: egui::Align::BOTTOM, ..Default::default() }); }
+                    ui.label(job);
+                });
+            });
 
-                let notes = &snapshot.chord_info.active_notes;
-                if notes.is_empty() {
-                    ui.label(
-                        RichText::new("no notes")
-                            .font(FontId::new(14.0, FontFamily::Proportional))
-                            .color(INV_TEXT),
-                    );
-                } else {
-                    let mut note_job = egui::text::LayoutJob::default();
-                    note_job.halign = egui::Align::Center;
-                    
-                    for (i, (name, _role)) in notes.iter().enumerate() {
-                        let mut pc = 0;
-                        for p in 0..12 {
-                            if name.starts_with(&crate::chord::pc_name(p, snapshot.scale_root)) {
-                                pc = p;
+            // ── Footer Section ──
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(Pos2::new(full_rect.min.x, full_rect.max.y - 75.0), Vec2::new(full_rect.width(), 75.0))), |ui| {
+                if params.show_history.value() {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(6.0); // Right padding
+                        ui.add_space(10.0); // Vertical push down
+                        let history = &snapshot.chord_history;
+                        if !history.is_empty() {
+                            let mut hist_job = egui::text::LayoutJob::default();
+                            hist_job.halign = egui::Align::RIGHT;
+                            let hist_len = history.len();
+                            let start_idx = hist_len.saturating_sub(6);
+                            for i in start_idx..hist_len {
+                                let entry = &history[i];
+                                let mut root_pc = None;
+                                for p in 0..12 { if entry.root.starts_with(crate::chord::pc_name(p, snapshot.scale_root)) { root_pc = Some(p); break; } }
+                                let display_pos = i - start_idx;
+                                let total_visible = hist_len - start_idx;
+                                let opacity = if i == hist_len - 1 { 255 } else { (150.0 * (display_pos as f32 / total_visible as f32)).max(60.0) as u8 };
+                                let base_color = if let Some(p) = root_pc { get_note_color(p, snapshot.scale_root, &snapshot.scale_intervals) } else { CHORD_TEXT };
+                                let color = base_color.gamma_multiply(opacity as f32 / 255.0);
+                                if i > start_idx { hist_job.append(" → ", 0.0, egui::text::TextFormat { font_id: FontId::new(14.0, FontFamily::Proportional), color: DIVIDER, valign: egui::Align::Center, ..Default::default() }); }
+                                hist_job.append(&format!("{}{}", entry.root, entry.quality), 0.0, egui::text::TextFormat { font_id: FontId::new(20.0, FontFamily::Proportional), color, ..Default::default() });
+                                if !entry.omitted.is_empty() { hist_job.append(&entry.omitted, 2.0, egui::text::TextFormat { font_id: FontId::new(12.0, FontFamily::Proportional), color: color.gamma_multiply(0.7), valign: egui::Align::TOP, ..Default::default() }); }
+                                if !entry.slash.is_empty() { hist_job.append(&entry.slash, 0.0, egui::text::TextFormat { font_id: FontId::new(16.0, FontFamily::Proportional), color: color.gamma_multiply(0.8), valign: egui::Align::BOTTOM, ..Default::default() }); }
                             }
-                        }
-                        
-                        let color = get_note_color(pc, snapshot.scale_root, &snapshot.scale_intervals);
-                        
-                        // Split name (e.g. "C#", "C#4") to color octave number in grey
-                        let (note_part, octave_part) = if let Some(first_digit) = name.find(|c: char| c.is_ascii_digit() || c == '-') {
-                            (&name[..first_digit], &name[first_digit..])
+                            ui.label(hist_job);
                         } else {
-                            (name.as_str(), "")
-                        };
-
-                        note_job.append(
-                            note_part,
-                            0.0,
-                            egui::text::TextFormat {
-                                font_id: FontId::new(28.0, FontFamily::Proportional),
-                                color,
-                                ..Default::default()
+                            ui.label(RichText::new("no history yet").font(FontId::new(14.0, FontFamily::Proportional)).color(INV_TEXT).italics());
+                        }
+                    });
+                } else {
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                        ui.add_space(4.0);
+                        let notes = &snapshot.chord_info.active_notes;
+                        if !notes.is_empty() {
+                            let mut note_job = egui::text::LayoutJob::default();
+                            note_job.halign = egui::Align::Center;
+                            for (i, (name, _)) in notes.iter().enumerate() {
+                                let mut pc = 0;
+                                for p in 0..12 { if name.starts_with(&crate::chord::pc_name(p, snapshot.scale_root)) { pc = p; } }
+                                let color = get_note_color(pc, snapshot.scale_root, &snapshot.scale_intervals);
+                                let (note_part, octave_part) = if let Some(first_digit) = name.find(|c: char| c.is_ascii_digit() || c == '-') { (&name[..first_digit], &name[first_digit..]) } else { (name.as_str(), "") };
+                                note_job.append(note_part, 0.0, egui::text::TextFormat { font_id: FontId::new(28.0, FontFamily::Proportional), color, ..Default::default() });
+                                if !octave_part.is_empty() { note_job.append(octave_part, 0.0, egui::text::TextFormat { font_id: FontId::new(28.0, FontFamily::Proportional), color: if SHOW_GREY_OCTAVES { NOTE_OFF } else { color }, ..Default::default() }); }
+                                if i < notes.len() - 1 { note_job.append(" · ", 0.0, egui::text::TextFormat { font_id: FontId::new(28.0, FontFamily::Proportional), color: DIVIDER, ..Default::default() }); }
                             }
-                        );
-                        
-                        if !octave_part.is_empty() {
-                            let octave_color = if SHOW_GREY_OCTAVES { NOTE_OFF } else { color };
-                            note_job.append(
-                                octave_part,
-                                0.0,
-                                egui::text::TextFormat {
-                                    font_id: FontId::new(28.0, FontFamily::Proportional), 
-                                    color: octave_color,
-                                    ..Default::default()
-                                }
-                            );
+                            ui.label(note_job);
+                        } else {
+                             ui.label(RichText::new("no notes").font(FontId::new(14.0, FontFamily::Proportional)).color(INV_TEXT));
                         }
-                        
-                        if i < notes.len() - 1 {
-                            note_job.append(
-                                " · ", // reduced spacing
-                                0.0,
-                                egui::text::TextFormat {
-                                    font_id: FontId::new(28.0, FontFamily::Proportional),
-                                    color: DIVIDER,
-                                    ..Default::default()
-                                }
-                            );
-                        }
-                    }
-                    ui.label(note_job);
+                    });
                 }
 
-                // Nashville Numerals bottom left
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                    if params.show_nashville.value() && !snapshot.nashville_text.is_empty() {
-                        ui.label(
-                            egui::RichText::new(&snapshot.nashville_text)
-                                .font(FontId::new(48.0, FontFamily::Proportional)) // Significantly bigger Nashville
-                                .color(Color32::from_rgb(220, 220, 230)),
-                        );
-                    }
-                    ui.add_space(10.0);
-                });
-
-                // Spacer instead of sizing logic (now at the top)
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::RIGHT), |ui| {
-                    ui.add_space(10.0);
-                });
-            });
-        });
-
-    // ── Central Area (Huge Chord Display) ──
-    egui::CentralPanel::default()
-        .frame(egui::Frame::NONE)
-        .show_inside(ui, |ui| {
-            // Keep exactly centered relative to the remaining free space!
-            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                ui.add_space(ui.available_height() * 0.5 - 75.0); // manual centering roughly based on typograhpy bounds
-                
-                let root_name = &snapshot.chord_info.root;
-                let root_pc = if root_name.is_empty() || root_name == "–" { None } else {
-                    let mut found = None;
-                    for p in 0..12 {
-                        if root_name.starts_with(&crate::chord::pc_name(p, snapshot.scale_root)) {
-                            found = Some(p);
-                        }
-                    }
-                    found
-                };
-                
-                let root_color = if let Some(p) = root_pc {
-                    get_note_color(p, snapshot.scale_root, &snapshot.scale_intervals)
-                } else {
-                    CHORD_TEXT
-                };
-
-                let quality = &snapshot.chord_info.quality;
-                let omitted = &snapshot.chord_info.omitted;
-                let slash = &snapshot.chord_info.slash;
-
-                let mut job = egui::text::LayoutJob::default();
-                job.halign = egui::Align::Center;
-                
-                let (root_note, root_octave) = if let Some(first_digit) = root_name.find(|c: char| c.is_ascii_digit() || c == '-') {
-                    (&root_name[..first_digit], &root_name[first_digit..])
-                } else {
-                    (root_name.as_str(), "")
-                };
-
-                job.append(
-                    root_note, 
-                    0.0,
-                    egui::text::TextFormat {
-                        font_id: FontId::new(128.0, FontFamily::Proportional),
-                        color: root_color,
-                        ..Default::default()
-                    }
-                );
-                
-                if !root_octave.is_empty() {
-                    let root_octave_color = if SHOW_GREY_OCTAVES { NOTE_OFF } else { root_color };
-                    job.append(
-                        root_octave, 
-                        0.0,
-                        egui::text::TextFormat {
-                            font_id: FontId::new(128.0, FontFamily::Proportional), // Same size as the root
-                            color: root_octave_color,
-                            valign: egui::Align::Center,
-                            ..Default::default()
-                        }
-                    );
-                }
-
-                if !quality.is_empty() {
-                    job.append(
-                        quality,
-                        0.0,
-                        egui::text::TextFormat {
-                            font_id: FontId::new(64.0, FontFamily::Proportional),
-                            color: Color32::from_rgb(180, 180, 195),
-                            valign: egui::Align::Center,
-                            ..Default::default()
-                        }
-                    );
-                }
-
-                if !omitted.is_empty() {
-                    job.append(
-                        omitted,
-                        4.0, // slight space
-                        egui::text::TextFormat {
-                            font_id: FontId::new(32.0, FontFamily::Proportional),
-                            color: Color32::from_rgb(140, 140, 160),
-                            valign: egui::Align::TOP,
-                            ..Default::default()
-                        }
-                    );
-                }
-
-                if !slash.is_empty() {
-                    job.append(
-                        slash,
-                        2.0,
-                        egui::text::TextFormat {
-                            font_id: FontId::new(72.0, FontFamily::Proportional),
-                            color: SLASH_TEXT,
-                            valign: egui::Align::BOTTOM,
-                            ..Default::default()
-                        }
-                    );
-                }
-                
-                ui.label(job);
-
-                // Inversion hint
-                let inv = &snapshot.chord_info.inversion;
-                if !inv.is_empty() {
-                    ui.add_space(4.0);
-                    ui.label(
-                        RichText::new(inv)
-                            .font(FontId::new(14.0, FontFamily::Proportional))
-                            .color(INV_TEXT)
-                            .italics(),
-                    );
+                if params.show_nashville.value() && !snapshot.nashville_text.is_empty() {
+                    let nash_rect = ui.available_rect_before_wrap();
+                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(Pos2::new(nash_rect.min.x + 20.0, nash_rect.max.y - 64.0), Pos2::new(nash_rect.max.x, nash_rect.max.y - 12.0))), |ui| {
+                        ui.label(egui::RichText::new(&snapshot.nashville_text).font(FontId::new(48.0, FontFamily::Proportional)).color(Color32::from_rgb(220, 220, 230)));
+                    });
                 }
             });
         });

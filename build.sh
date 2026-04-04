@@ -17,9 +17,17 @@ fi
 
 mkdir -p bin
 
-# Deploy VST3
-cp "target/release/chord_lens.$EXT" "bin/ChordLens.vst3"
-# Deploy CLAP
-cp "target/release/chord_lens.$EXT" "bin/ChordLens.clap"
+# Deploy VST3 (might fail if DAW has it locked)
+cp "target/release/chord_lens.$EXT" "bin/ChordLens.vst3" || echo "Warning: bin/ChordLens.vst3 is busy, skipping deploy."
+# Deploy CLAP (might fail if DAW has it locked)
+cp "target/release/chord_lens.$EXT" "bin/ChordLens.clap" || echo "Warning: bin/ChordLens.clap is busy, skipping deploy."
 
 echo "Build complete! Plugins are located in the bin/ directory."
+
+echo "Creating timestamped release in tmp/..."
+dt=$(date +%Y%m%d_%H%M%S)
+dir="tmp/release_$dt"
+mkdir -p "$dir"
+cp "target/release/chord_lens.$EXT" "$dir/ChordLens.vst3"
+cp "target/release/chord_lens.$EXT" "$dir/ChordLens.clap"
+echo "Snapshot saved to $dir"
