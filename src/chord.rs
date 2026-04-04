@@ -172,7 +172,7 @@ pub fn detect(active_notes: &[u8]) -> ChordInfo {
 
     if sorted_notes.is_empty() {
         return ChordInfo {
-            root: "–".to_string(),
+            root: String::new(),
             quality: String::new(),
             omitted: String::new(),
             slash: String::new(),
