@@ -2,7 +2,8 @@
 name = "chord-lens"
 version = "0.1.0"
 edition = "2021"
-authors = ["chord-lens contributors"]
+authors = ["Simon Heimler"]
+license = "MIT"
 description = "A real-time MIDI chord detector plugin (VST3/CLAP)"
 
 [lib]
@@ -13,7 +14,6 @@ crate-type = ["cdylib", "lib"]
 # Core nih-plug framework – pulled directly from git so we always get the latest
 # stable API.  Pin to a specific rev in production.
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = [
-    "assert_process_allocs",
     "standalone",
 ] }
 

@@ -12,8 +12,9 @@ use nih_plug_egui::{
     egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, RichText, Vec2},
     EguiState,
 };
-use parking_lot::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use parking_lot::RwLock;
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 
@@ -69,28 +70,28 @@ fn setup_fonts(ctx: &egui::Context) {
 /// and `parking_lot::RwLock` never allocates on the uncontended fast path,
 /// this is safe and performant.
 pub fn create(
-    editor_state: Arc<EguiState>,
-    chord_state: Arc<RwLock<ChordState>>,
+    params: Arc<crate::ChordLensParams>,
+    chord_state: Arc<parking_lot::RwLock<crate::ChordState>>,
+    reset_history: Arc<AtomicBool>,
 ) -> Option<Box<dyn nih_plug::prelude::Editor>> {
+    let editor_state = params.editor_state.clone();
+    let rs_state = editor_state.clone();
     create_egui_editor(
         editor_state,
-        // Per-editor user state (unused – all our state is in Arc)
         (),
-        // One-time setup callback
         |ctx, _| {
             setup_fonts(ctx);
             style_egui(ctx);
         },
-        // Per-frame paint callback
-        move |ctx, _setter, _state| {
-            // Snapshot the current chord once per frame so we render a
-            // consistent picture even if the audio thread fires mid-frame.
+        move |ctx, setter, _state| {
+            // Take a lightweight read-lock to snapshot the current chord state
+            // so we don't hold the lock while rendering UI commands.
             let snapshot = chord_state.read().clone();
-
-            egui::CentralPanel::default()
-                .frame(egui::Frame::NONE.fill(BG))
-                .show(ctx, |ui| {
-                    draw_ui(ui, &snapshot);
+            nih_plug_egui::resizable_window::ResizableWindow::new("resize")
+                .min_size((300.0, 200.0))
+                .show(ctx, &rs_state, |ui| {
+                    ui.painter().rect_filled(ui.max_rect(), 0.0, BG);
+                    draw_ui(ui, setter, &params, &snapshot, &reset_history);
                 });
         },
     )
@@ -109,8 +110,8 @@ fn style_egui(ctx: &egui::Context) {
     style.visuals.widgets.noninteractive.bg_fill = BG;
 
     // No strokes/shadows
-    style.visuals.window_shadow = egui::epaint::Shadow::NONE;
-    style.visuals.popup_shadow = egui::epaint::Shadow::NONE;
+    style.visuals.window_shadow = egui::Shadow::NONE;
+    style.visuals.popup_shadow = egui::Shadow::NONE;
 
     style.spacing.item_spacing = Vec2::new(0.0, 0.0);
 
@@ -119,146 +120,224 @@ fn style_egui(ctx: &egui::Context) {
 
 // ─── Frame drawing ────────────────────────────────────────────────────────────
 
-fn draw_ui(ui: &mut egui::Ui, snapshot: &ChordState) {
-    // Vertically centre everything in the available rect
+fn draw_ui(
+    ui: &mut egui::Ui, 
+    setter: &nih_plug::prelude::ParamSetter, 
+    params: &Arc<crate::ChordLensParams>, 
+    snapshot: &ChordState,
+    reset_history: &Arc<AtomicBool>,
+) {
     let avail = ui.available_size();
 
-    ui.allocate_ui_with_layout(avail, egui::Layout::top_down(egui::Align::Center), |ui| {
-        // ── Top padding ──────────────────────────────────────────────────
-        ui.add_space(avail.y * 0.15);
-
-        // ── Main chord name ──────────────────────────────────────────────
-        let root = &snapshot.chord_info.root;
-        let quality = &snapshot.chord_info.quality;
-        let omitted = &snapshot.chord_info.omitted;
-        let slash = &snapshot.chord_info.slash;
-
-        let mut job = egui::text::LayoutJob::default();
-        job.halign = egui::Align::Center;
-        
-        job.append(
-            root, 
-            0.0,
-            egui::text::TextFormat {
-                font_id: FontId::new(96.0, FontFamily::Proportional),
-                color: CHORD_TEXT,
-                ..Default::default()
-            }
-        );
-
-        if !quality.is_empty() {
-            job.append(
-                quality,
-                0.0,
-                egui::text::TextFormat {
-                    font_id: FontId::new(48.0, FontFamily::Proportional),
-                    color: Color32::from_rgb(180, 180, 195),
-                    valign: egui::Align::Center,
-                    ..Default::default()
-                }
-            );
-        }
-
-        if !omitted.is_empty() {
-            job.append(
-                omitted,
-                4.0, // slight space
-                egui::text::TextFormat {
-                    font_id: FontId::new(24.0, FontFamily::Proportional),
-                    color: Color32::from_rgb(140, 140, 160),
-                    valign: egui::Align::TOP,
-                    ..Default::default()
-                }
-            );
-        }
-
-        if !slash.is_empty() {
-            job.append(
-                slash,
-                2.0,
-                egui::text::TextFormat {
-                    font_id: FontId::new(56.0, FontFamily::Proportional),
-                    color: SLASH_TEXT,
-                    valign: egui::Align::BOTTOM,
-                    ..Default::default()
-                }
-            );
-        }
-        
-        ui.label(job);
-
-        // ── Inversion hint ───────────────────────────────────────────────
-        let inv = &snapshot.chord_info.inversion;
-        if !inv.is_empty() {
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new(inv)
-                    .font(FontId::new(13.0, FontFamily::Proportional))
-                    .color(INV_TEXT)
-                    .italics(),
-            );
-        }
-
-        // ── Thin decorative divider ─────────────────────────────────────
-        ui.add_space(16.0);
-        let divider_rect = {
-            let (rect, _) =
-                ui.allocate_exact_size(Vec2::new(avail.x * 0.55, 1.0), egui::Sense::hover());
-            rect
-        };
-        ui.painter().rect_filled(divider_rect, 0.0, DIVIDER);
-
-        // ── Active notes list ────────────────────────────────────────────
-        ui.add_space(12.0);
-        let notes = &snapshot.chord_info.active_notes;
-        if notes.is_empty() {
-            ui.label(
-                RichText::new("no notes")
-                    .font(FontId::new(13.0, FontFamily::Proportional))
-                    .color(INV_TEXT),
-            );
-        } else {
-            let mut note_job = egui::text::LayoutJob::default();
-            note_job.halign = egui::Align::Center;
-            
-            for (i, (name, role)) in notes.iter().enumerate() {
-                let color = match role {
-                    crate::chord::NoteRole::Normal => NOTE_TEXT,
-                    crate::chord::NoteRole::Root => CHORD_TEXT, // bright text
-                    crate::chord::NoteRole::Bass => SLASH_TEXT, // teal highlight
-                };
+    // ── Top Bar (Key Detection) ──
+    egui::TopBottomPanel::top("top_bar_panel")
+        .frame(egui::Frame::NONE.inner_margin(egui::Margin::same(12i8)))
+        .show_separator_line(false)
+        .show_inside(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.visuals_mut().widgets.inactive.bg_fill = Color32::TRANSPARENT;
+                ui.visuals_mut().widgets.hovered.bg_fill = Color32::from_rgb(30, 30, 40);
                 
-                note_job.append(
-                    name,
+                let mut root = params.key_root.value();
+                let r_changed = egui::ComboBox::from_id_source("root_cmb")
+                    .selected_text(root.as_str())
+                    .show_ui(ui, |ui| {
+                        let mut changed = false;
+                        for r in [
+                            crate::KeyRoot::Auto, crate::KeyRoot::C, crate::KeyRoot::CSharp, 
+                            crate::KeyRoot::D, crate::KeyRoot::DSharp, crate::KeyRoot::E, 
+                            crate::KeyRoot::F, crate::KeyRoot::FSharp, crate::KeyRoot::G, 
+                            crate::KeyRoot::GSharp, crate::KeyRoot::A, crate::KeyRoot::ASharp, crate::KeyRoot::B
+                        ] {
+                            if ui.selectable_label(root == r, r.as_str()).clicked() {
+                                root = r;
+                                changed = true;
+                            }
+                        }
+                        changed
+                    }).inner.unwrap_or(false);
+
+                if r_changed {
+                    setter.begin_set_parameter(&params.key_root);
+                    setter.set_parameter(&params.key_root, root);
+                    setter.end_set_parameter(&params.key_root);
+                }
+                
+                if root != crate::KeyRoot::Auto {
+                    let mut mode = params.key_mode.value();
+                    let m_changed = egui::ComboBox::from_id_source("mode_cmb")
+                        .selected_text(mode.as_str())
+                        .show_ui(ui, |ui| {
+                            let mut changed = false;
+                            for m in [
+                                crate::KeyMode::Major, crate::KeyMode::Minor, crate::KeyMode::Dorian,
+                                crate::KeyMode::Phrygian, crate::KeyMode::Lydian, crate::KeyMode::Mixolydian,
+                                crate::KeyMode::Locrian
+                            ] {
+                                if ui.selectable_label(mode == m, m.as_str()).clicked() {
+                                    mode = m;
+                                    changed = true;
+                                }
+                            }
+                            changed
+                        }).inner.unwrap_or(false);
+
+                    if m_changed {
+                        setter.begin_set_parameter(&params.key_mode);
+                        setter.set_parameter(&params.key_mode, mode);
+                        setter.end_set_parameter(&params.key_mode);
+                    }
+                }
+                
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if params.key_root.value() == crate::KeyRoot::Auto {
+                        if ui.add(egui::Button::new(egui::RichText::new("Clear").size(10.0)).fill(Color32::from_rgb(40, 40, 50))).clicked() {
+                            reset_history.store(true, Ordering::Relaxed);
+                        }
+                        ui.add_space(8.0);
+                    }
+                    ui.label(egui::RichText::new(&snapshot.key_text).color(Color32::from_rgb(120, 120, 130)).size(16.0));
+                });
+            });
+        });
+
+    // ── Bottom Box (Active Notes) ──
+    egui::TopBottomPanel::bottom("bottom_bar_panel")
+        .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(12i8, 16i8)))
+        .exact_height(80.0) // Fixed area for notes ensures the visual anchor doesn't jump
+        .show_separator_line(false)
+        .show_inside(ui, |ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                ui.add_space(8.0);
+
+                let notes = &snapshot.chord_info.active_notes;
+                if notes.is_empty() {
+                    ui.label(
+                        RichText::new("no notes")
+                            .font(FontId::new(13.0, FontFamily::Proportional))
+                            .color(INV_TEXT),
+                    );
+                } else {
+                    let mut note_job = egui::text::LayoutJob::default();
+                    note_job.halign = egui::Align::Center;
+                    
+                    for (i, (name, role)) in notes.iter().enumerate() {
+                        let color = match role {
+                            crate::chord::NoteRole::Normal => NOTE_TEXT,
+                            crate::chord::NoteRole::Root => CHORD_TEXT, // bright text
+                            crate::chord::NoteRole::Bass => SLASH_TEXT, // teal highlight
+                        };
+                        
+                        note_job.append(
+                            name,
+                            0.0,
+                            egui::text::TextFormat {
+                                font_id: FontId::new(14.0, FontFamily::Proportional),
+                                color,
+                                ..Default::default()
+                            }
+                        );
+                        
+                        if i < notes.len() - 1 {
+                            note_job.append(
+                                "  ·  ",
+                                0.0,
+                                egui::text::TextFormat {
+                                    font_id: FontId::new(14.0, FontFamily::Proportional),
+                                    color: DIVIDER,
+                                    ..Default::default()
+                                }
+                            );
+                        }
+                    }
+                    ui.label(note_job);
+                }
+
+                // Branding space instead of text
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                    ui.add_space(10.0);
+                });
+            });
+        });
+
+    // ── Central Area (Huge Chord Display) ──
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE)
+        .show_inside(ui, |ui| {
+            // Keep exactly centered relative to the remaining free space!
+            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                ui.add_space(ui.available_height() * 0.5 - 50.0); // manual centering roughly based on typograhpy bounds
+                
+                let root = &snapshot.chord_info.root;
+                let quality = &snapshot.chord_info.quality;
+                let omitted = &snapshot.chord_info.omitted;
+                let slash = &snapshot.chord_info.slash;
+
+                let mut job = egui::text::LayoutJob::default();
+                job.halign = egui::Align::Center;
+                
+                job.append(
+                    root, 
                     0.0,
                     egui::text::TextFormat {
-                        font_id: FontId::new(14.0, FontFamily::Proportional),
-                        color,
+                        font_id: FontId::new(96.0, FontFamily::Proportional),
+                        color: CHORD_TEXT,
                         ..Default::default()
                     }
                 );
-                
-                if i < notes.len() - 1 {
-                    note_job.append(
-                        "  ·  ",
+
+                if !quality.is_empty() {
+                    job.append(
+                        quality,
                         0.0,
                         egui::text::TextFormat {
-                            font_id: FontId::new(14.0, FontFamily::Proportional),
-                            color: DIVIDER,
+                            font_id: FontId::new(48.0, FontFamily::Proportional),
+                            color: Color32::from_rgb(180, 180, 195),
+                            valign: egui::Align::Center,
                             ..Default::default()
                         }
                     );
                 }
-            }
-            ui.label(note_job);
-        }
 
-        // ── Branding whisper ─────────────────────────────────────────────
-        ui.add_space(16.0);
-        ui.label(
-            RichText::new("CHORD LENS")
-                .font(FontId::new(9.0, FontFamily::Proportional))
-                .color(Color32::from_rgb(40, 40, 55)),
-        );
-    });
+                if !omitted.is_empty() {
+                    job.append(
+                        omitted,
+                        4.0, // slight space
+                        egui::text::TextFormat {
+                            font_id: FontId::new(24.0, FontFamily::Proportional),
+                            color: Color32::from_rgb(140, 140, 160),
+                            valign: egui::Align::TOP,
+                            ..Default::default()
+                        }
+                    );
+                }
+
+                if !slash.is_empty() {
+                    job.append(
+                        slash,
+                        2.0,
+                        egui::text::TextFormat {
+                            font_id: FontId::new(56.0, FontFamily::Proportional),
+                            color: SLASH_TEXT,
+                            valign: egui::Align::BOTTOM,
+                            ..Default::default()
+                        }
+                    );
+                }
+                
+                ui.label(job);
+
+                // Inversion hint
+                let inv = &snapshot.chord_info.inversion;
+                if !inv.is_empty() {
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(inv)
+                            .font(FontId::new(13.0, FontFamily::Proportional))
+                            .color(INV_TEXT)
+                            .italics(),
+                    );
+                }
+            });
+        });
 }

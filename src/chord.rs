@@ -42,8 +42,10 @@ pub struct ChordInfo {
     pub slash: String,
     /// Inversion description: `""`, `"1st inv."`, `"2nd inv."`, `"3rd inv."`.
     pub inversion: String,
-    /// Names and roles of every currently active note.
+    /// Active notes formatted as strings with their role.
     pub active_notes: Vec<(String, NoteRole)>,
+    /// Raw active MIDI values with their role, used for UI visualization.
+    pub active_midi: Vec<(u8, NoteRole)>,
 }
 
 impl fmt::Display for ChordInfo {
@@ -167,7 +169,7 @@ pub fn detect(active_notes: &[u8]) -> ChordInfo {
 
     if sorted_notes.len() < 2 {
         // Single note or empty – just show the note name or silence marker
-        let active_notes = sorted_notes
+        let active_notes: Vec<(String, NoteRole)> = sorted_notes
             .iter()
             .map(|&n| (midi_to_name(n), NoteRole::Root))
             .collect();
@@ -183,6 +185,7 @@ pub fn detect(active_notes: &[u8]) -> ChordInfo {
             slash: String::new(),
             inversion: String::new(),
             active_notes,
+            active_midi: sorted_notes.iter().map(|&n| (n, NoteRole::Root)).collect(),
         };
     }
 
@@ -308,12 +311,13 @@ pub fn detect(active_notes: &[u8]) -> ChordInfo {
                 .collect();
                 
             ChordInfo {
-                root: format!("? ({})", pcs.iter().map(|&p| pc_name(p)).collect::<Vec<_>>().join(" ")),
+                root: String::new(),
                 quality: String::new(),
                 omitted: String::new(),
                 slash: String::new(),
                 inversion: String::new(),
                 active_notes,
+                active_midi: sorted_notes.iter().map(|&n| (n, NoteRole::Normal)).collect(),
             }
         }
         Some((root_pc, quality, _)) => {
@@ -388,9 +392,105 @@ pub fn detect(active_notes: &[u8]) -> ChordInfo {
                 })
                 .collect();
 
-            ChordInfo { root: root_name.to_string(), quality: qual_str, omitted, slash, inversion, active_notes }
+            let active_midi = sorted_notes
+                .iter()
+                .map(|&n| {
+                    let role = if n == bass_midi && bass_pc != root_pc {
+                        NoteRole::Bass
+                    } else if n % 12 == root_pc {
+                        NoteRole::Root
+                    } else {
+                        NoteRole::Normal
+                    };
+                    (n, role)
+                })
+                .collect();
+
+            ChordInfo { root: root_name.to_string(), quality: qual_str, omitted, slash, inversion, active_notes, active_midi }
         }
     }
+}
+
+pub fn detect_scale(
+    history_midi: &std::collections::VecDeque<u8>, 
+    current_bass: Option<u8>,
+    current_key: &str,
+) -> String {
+    if history_midi.is_empty() {
+        return "Unknown".to_string();
+    }
+
+    // 1. Calculate pitch class frequencies with recency weighting
+    // Newest notes count for double points to respond to key changes faster
+    let mut pc_counts = [0i32; 12];
+    let len = history_midi.len();
+    for (i, &m) in history_midi.iter().enumerate() {
+        let weight = if i > len / 2 { 2 } else { 1 };
+        pc_counts[(m % 12) as usize] += weight;
+    }
+
+    // 2. Define scales with "simplicity" weights
+    // (Name, Intervals, Weight) - higher weight = more "expected"
+    let modes = [
+        ("Major", vec![0, 2, 4, 5, 7, 9, 11], 100),
+        ("Minor", vec![0, 2, 3, 5, 7, 8, 10], 90),
+        ("Maj Pent.", vec![0, 2, 4, 7, 9], 80),
+        ("Min Pent.", vec![0, 3, 5, 7, 10], 80),
+        ("Dorian", vec![0, 2, 3, 5, 7, 9, 10], 60),
+        ("Mixolydian", vec![0, 2, 4, 5, 7, 9, 10], 50),
+        ("Lydian", vec![0, 2, 4, 6, 7, 9, 11], 40),
+        ("Phrygian", vec![0, 1, 3, 5, 7, 8, 10], 30),
+        ("Locrian", vec![0, 1, 3, 5, 6, 8, 10], 20),
+    ];
+
+    // 3. Score every possible root/mode combination
+    let mut best_score = -1000;
+    let mut best_name = String::from("Unknown");
+
+    for root_pc in 0..12 {
+        let root_freq = pc_counts[root_pc as usize];
+        
+        for (mode_name, intervals, base_weight) in modes.iter() {
+            let mut score = *base_weight;
+
+            // Tonic bonus: If this is the most frequent note, it's likely the root
+            score += root_freq * 10;
+            
+            // Bass bonus: If current bass matches root
+            if let Some(b) = current_bass {
+                if b % 12 == root_pc as u8 {
+                    score += 50;
+                }
+            }
+
+            // Fit points:
+            for pc in 0..12 {
+                let freq = pc_counts[pc as usize];
+                if freq == 0 { continue; }
+                
+                let rel = (pc + 12 - root_pc) % 12;
+                if intervals.contains(&(rel as i32)) {
+                    score += freq * 5;
+                } else {
+                    // Penalty for notes not in scale (increased for faster modulation detection)
+                    score -= freq * 50;
+                }
+            }
+
+            // Hysteresis: If this is the CURRENT scale, give it a massive head start
+            let candidate_name = format!("{} {}", pc_name(root_pc as u8), mode_name);
+            if candidate_name == current_key {
+                score += 150; 
+            }
+
+            if score > best_score {
+                best_score = score;
+                best_name = candidate_name;
+            }
+        }
+    }
+
+    best_name
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
