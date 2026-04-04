@@ -18,10 +18,13 @@ use std::sync::Arc;
 
 const BG: Color32 = Color32::from_rgb(13, 13, 18);
 const CHORD_TEXT: Color32 = Color32::from_rgb(245, 245, 250);
-const SLASH_TEXT: Color32 = Color32::from_rgb(120, 220, 180);
+const SLASH_TEXT: Color32 = Color32::from_rgb(150, 150, 165);
 const NOTE_TEXT: Color32 = Color32::from_rgb(140, 140, 160);
-const INV_TEXT: Color32 = Color32::from_rgb(90, 90, 110);
-const DIVIDER: Color32 = Color32::from_rgb(35, 35, 50);
+const INV_TEXT: Color32 = Color32::from_rgb(130, 130, 140);
+const DIVIDER: Color32 = Color32::from_rgb(60, 60, 75);
+
+/// Toggles whether octave numbers are displayed in a subtle grey or in the scale color.
+const SHOW_GREY_OCTAVES: bool = false;
 
 // ─── Widget sizes ─────────────────────────────────────────────────────────────
 
@@ -233,11 +236,11 @@ fn draw_ui(
     // ── Bottom Box (Active Notes) ──
     egui::TopBottomPanel::bottom("bottom_bar_panel")
         .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(14i8, 16i8)))
-        .exact_height(80.0) // Fixed area for notes ensures the visual anchor doesn't jump
+        .exact_height(70.0) // Compact bottom bar
         .show_separator_line(false)
         .show_inside(ui, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                ui.add_space(8.0);
+                ui.add_space(4.0);
 
                 let notes = &snapshot.chord_info.active_notes;
                 if notes.is_empty() {
@@ -272,19 +275,20 @@ fn draw_ui(
                             note_part,
                             0.0,
                             egui::text::TextFormat {
-                                font_id: FontId::new(22.0, FontFamily::Proportional),
+                                font_id: FontId::new(28.0, FontFamily::Proportional),
                                 color,
                                 ..Default::default()
                             }
                         );
                         
                         if !octave_part.is_empty() {
+                            let octave_color = if SHOW_GREY_OCTAVES { NOTE_OFF } else { color };
                             note_job.append(
                                 octave_part,
                                 0.0,
                                 egui::text::TextFormat {
-                                    font_id: FontId::new(16.0, FontFamily::Proportional), // Slightly smaller octave
-                                    color: NOTE_OFF,
+                                    font_id: FontId::new(28.0, FontFamily::Proportional), 
+                                    color: octave_color,
                                     ..Default::default()
                                 }
                             );
@@ -292,10 +296,10 @@ fn draw_ui(
                         
                         if i < notes.len() - 1 {
                             note_job.append(
-                                "  ·  ",
+                                " · ", // reduced spacing
                                 0.0,
                                 egui::text::TextFormat {
-                                    font_id: FontId::new(22.0, FontFamily::Proportional),
+                                    font_id: FontId::new(28.0, FontFamily::Proportional),
                                     color: DIVIDER,
                                     ..Default::default()
                                 }
@@ -311,7 +315,7 @@ fn draw_ui(
                         ui.label(
                             egui::RichText::new(&snapshot.nashville_text)
                                 .font(FontId::new(48.0, FontFamily::Proportional)) // Significantly bigger Nashville
-                                .color(Color32::from_rgb(100, 100, 115)),
+                                .color(Color32::from_rgb(220, 220, 230)),
                         );
                     }
                     ui.add_space(10.0);
@@ -374,12 +378,13 @@ fn draw_ui(
                 );
                 
                 if !root_octave.is_empty() {
+                    let root_octave_color = if SHOW_GREY_OCTAVES { NOTE_OFF } else { root_color };
                     job.append(
                         root_octave, 
                         0.0,
                         egui::text::TextFormat {
-                            font_id: FontId::new(80.0, FontFamily::Proportional), // Large but smaller than the root
-                            color: NOTE_OFF,
+                            font_id: FontId::new(128.0, FontFamily::Proportional), // Same size as the root
+                            color: root_octave_color,
                             valign: egui::Align::Center,
                             ..Default::default()
                         }

@@ -4,8 +4,14 @@ All notable changes to the **ChordLens** project will be documented in this file
 
 ## [0.1.3] - 2026-04-04
 
+### Added
+- **Maximized Hero Display:** Huge **128px** font for the chord root, making harmonic information the focal point of the interface.
+- **High-Contrast Nashville:** White/Near-white coloring for Nashville numerals at **48px** for instant readability.
+- **High-Visibility Note List:** Increased active note font to **28px** with optimized, compact horizontal spacing.
+- **Togglable Octave Coloring:** Architecture implemented for split-color pitch/octave display (disabled by default in code).
 ### Changed
-- **Note Legibility:** In the active note list, the pitch name remains colored according to its scale role, while the octave number is now displayed in a subtle grey to reduce visual clutter.
+- **Subtle Layout Compaction:** Bottom bar height reduced to **70.0** to frame the main typography more effectively.
+- **Improved Alignment:** Manual centering offsets recalibrated for the enlarged typography in the 480x300 canvas.
 
 ## [0.1.2] - 2026-04-04
 
@@ -18,7 +24,7 @@ All notable changes to the **ChordLens** project will be documented in this file
 ## [0.1.1] - 2026-04-04
 
 ### Changed
-- **Maximized Typography:** Increased font sizes (128px for Root, 64px for Quality, 48px for Nashville) to fully utilize the 480x300 layout.
+- **Maximized Typography:** Increased initial font sizes (96px for Root, 48px for Nashville) for better visibility.
 - **Asset Optimization:** Removed dozens of unused font variants from the `assets/` folder to reduce plugin footprint.
 ### Fixed
 - **Linux Build Environment:** Added missing `libx11-xcb-dev` system dependency for GitHub Actions.
