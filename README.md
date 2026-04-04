@@ -1,52 +1,34 @@
 # ChordLens
 
-**ChordLens** is an elegant, real-time MIDI chord detector audio plugin. It intercepts incoming MIDI note events, calculates the musical chord being held, and displays it in a minimalistic, typography-focused UI without any audio DSP overhead.
+**ChordLens** is a clean MIDI chord and scale detector for musicians and producers. It provides clear harmonic information in your DAW, helping you identify chords, track scale changes, and use Nashville numbering in real-time.
 
-## Features
+![ChordLens](assets/ChordLens.png)
 
-- **Interval-Math Detection**: Uses pure pitch-class sets and interval lookups to avoid external dependency bloat.
-- **Advanced Chord Support**: Detects major, minor, augmented, diminished, 7ths, 9ths, 11ths, and 13ths.
-- **Pragmatic Voicings**: Automatically detects and informs the user of omitted functional notes logically (e.g. `13(no11)`, `m9(no5)`) suitable for realistic guitar shell voicings or keyboard reductions.
-- **Inversion & Slash Tracking**: Correctly calculates inversions and tracks alternate bass notes seamlessly (`C/E`, `1st inv.`).
-- **Thread-Safe**: Strictly decoupled audio and GUI loops utilizing lock-free snapshots so audio threads are never preempted.
+## Main Features
 
----
+- **Chord Detection:** Quickly identifies chords from basic triads to complex jazz voicings (e.g., `Am7(b5)`, `Cmaj9`, `Fsus4`).
+- **Scale Tracking:** Analyzes your performance history to suggest the most likely musical key. The engine is weighted towards recent notes for faster response to modulations, and it favors commonly known scales (Major/Minor) when multiple interpretations are possible.
+- **Nashville Numbering:** Toggle the **[N]** button to see the chord's degree within the current scale (e.g., `IV`, `vi`, `V/ii`).
+- **Visual Note Roles:** Notes are color-coded based on their role in the current scale—making root notes, scale steps, and chromatic "out-of-key" notes easy to spot.
+- **Minimalist UI:** A focused interface designed for legibility at a distance, perfect for live playing or monitoring while recording.
 
-## Developer Instructions
+## How it Works
 
-It is built with Rust, `nih-plug`, and `egui`.
+- **Octave Handling:** Recognizes the core harmonic structure whether you're playing simple voicings or wide, octave-doubled spans.
+- **Manual Key Lock:** You can manually set a root and scale mode (Major, Minor, Dorian, etc.) to override the auto-detection.
+- **Inversions:** Displays 1st, 2nd, and 3rd inversions when detected.
 
-### Prerequisites
-1. Installed **Rust** toolchain (via [rustup](https://rustup.rs/)). 
-2. A host DAW that supports **CLAP** or **VST3** plugins.
+## Installation
 
-### Building
-The easiest way to compile the source code is natively through Cargo.
+ChordLens is a **VST3** and **CLAP** plugin, compatible with most modern DAWs like Bitwig Studio, Ableton Live, Reaper, and FL Studio.
 
-```bash
-# Build the optimized release binary
-cargo build --release
-```
+1. Download the plugin build.
+2. Place the file in your VST3 or CLAP folder.
+3. Refresh your plugin list and add **ChordLens** to any MIDI track.
 
-Thanks to the aggressive compiler configurations in `Cargo.toml`, ChordLens will compile stripped of symbols and optimized for file size, yielding a lightweight ~3.4MB plugin.
+## AI Assistance Disclaimer
 
-### Installation
-Upon a successful build, the target library will be generated inside the `/target/release/` directory.
+This module is part of Schwung and was developed with AI assistance, including Claude, Codex, and other AI assistants.
 
-- **Windows:** You will find `chord_lens.dll`. Rename the extension to `.vst3` or `.clap` respectively, and drop it into your plugin folder.
-- **macOS:** You will find `libchord_lens.dylib`. Rename it to `.vst3` or `.clap`.
-- **Linux:** You will find `libchord_lens.so`. Rename it to `.vst3` or `.clap`.
-
-For example, to quickly generate a ready-to-test `.clap` on Windows:
-```bash
-mkdir -p tmp
-cp target/release/chord_lens.dll tmp/chord_lens.clap
-```
-*(You can then point your DAW to this dummy directory or copy it into `%COMMONPROGRAMFILES%/CLAP`)*.
-
-### Testing
-Because the complex interval detection algorithms are strictly standalone functions decoupled from the audio engine, you can exhaustively unit test chord detection scenarios effortlessly:
-
-```bash
-cargo test --lib
-```
+All architecture, implementation, and release decisions are reviewed by human maintainers.
+AI-assisted content may still contain errors, so please validate functionality, security, and license compatibility before production use.

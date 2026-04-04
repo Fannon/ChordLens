@@ -71,7 +71,7 @@ pub fn midi_to_name(note: u8) -> String {
     format!("{}{}", NOTE_NAMES[pc], octave)
 }
 
-fn pc_name(pc: u8) -> &'static str {
+pub fn pc_name(pc: u8) -> &'static str {
     NOTE_NAMES[(pc % 12) as usize]
 }
 
@@ -162,24 +162,62 @@ static TEMPLATES: &[ChordTemplate] = &[
 ///
 /// `active_notes` can be in any order; the function sorts internally.
 pub fn detect(active_notes: &[u8]) -> ChordInfo {
-    // Build the display list first (we need raw note data before deduplication)
     let mut sorted_notes: Vec<u8> = active_notes.to_vec();
     sorted_notes.sort_unstable();
-    sorted_notes.dedup();
+    
+    // Dedup pitch classes to detect octaves (e.g. C1, C2 -> [0])
+    let mut pcs: Vec<u8> = sorted_notes.iter().map(|n| n % 12).collect();
+    pcs.sort_unstable();
+    pcs.dedup();
 
-    if sorted_notes.len() < 2 {
-        // Single note or empty – just show the note name or silence marker
+    if sorted_notes.is_empty() {
+        return ChordInfo {
+            root: "–".to_string(),
+            quality: String::new(),
+            omitted: String::new(),
+            slash: String::new(),
+            inversion: String::new(),
+            active_notes: vec![],
+            active_midi: vec![],
+        };
+    }
+
+    if pcs.len() == 1 {
+        // All active notes are octaves of the same pitch class
+        let pc = sorted_notes[0] % 12;
+        let root_name = if sorted_notes.len() > 1 {
+            pc_name(pc).to_string()
+        } else {
+            midi_to_name(sorted_notes[0])
+        };
+        
         let active_notes: Vec<(String, NoteRole)> = sorted_notes
             .iter()
             .map(|&n| (midi_to_name(n), NoteRole::Root))
             .collect();
             
         return ChordInfo {
-            root: if sorted_notes.is_empty() {
-                "–".to_string()
-            } else {
-                midi_to_name(sorted_notes[0])
-            },
+            root: root_name,
+            quality: String::new(),
+            omitted: String::new(),
+            slash: String::new(),
+            inversion: String::new(),
+            active_notes,
+            active_midi: sorted_notes.iter().map(|&n| (n, NoteRole::Root)).collect(),
+        };
+    }
+
+    sorted_notes.dedup();
+    if sorted_notes.len() < 2 {
+        // Single note left after raw dedup (if any)
+        let root_name = midi_to_name(sorted_notes[0]);
+        let active_notes: Vec<(String, NoteRole)> = sorted_notes
+            .iter()
+            .map(|&n| (midi_to_name(n), NoteRole::Root))
+            .collect();
+            
+        return ChordInfo {
+            root: root_name,
             quality: String::new(),
             omitted: String::new(),
             slash: String::new(),
@@ -190,13 +228,9 @@ pub fn detect(active_notes: &[u8]) -> ChordInfo {
     }
 
     // Bass note = lowest sounding MIDI number
-    let bass_midi = sorted_notes[0];
-    let bass_pc = bass_midi % 12; // pitch class 0–11
+    let bass_midi = active_notes.iter().copied().min().unwrap_or(0);
+    let bass_pc = bass_midi % 12;
 
-    // Pitch-class set (mod-12, deduplicated, sorted)
-    let mut pcs: Vec<u8> = sorted_notes.iter().map(|n| n % 12).collect();
-    pcs.sort_unstable();
-    pcs.dedup();
 
     // Try every pitch class as a potential root candidate.
     // We pick the candidate that:
@@ -415,9 +449,9 @@ pub fn detect_scale(
     history_midi: &std::collections::VecDeque<u8>, 
     current_bass: Option<u8>,
     current_key: &str,
-) -> String {
+) -> (String, u8, Vec<i32>) {
     if history_midi.is_empty() {
-        return "Unknown".to_string();
+        return ("Unknown".to_string(), 0, vec![]);
     }
 
     // 1. Calculate pitch class frequencies with recency weighting
@@ -490,7 +524,19 @@ pub fn detect_scale(
         }
     }
 
-    best_name
+    // Find matched mode for returning intervals
+    let mut root_pc = 0;
+    let mut best_intervals = vec![];
+    for r in 0..12 {
+        for (m, ints, _) in modes.iter() {
+            if format!("{} {}", pc_name(r as u8), m) == best_name {
+                root_pc = r;
+                best_intervals = ints.clone();
+            }
+        }
+    }
+
+    (best_name, root_pc as u8, best_intervals)
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

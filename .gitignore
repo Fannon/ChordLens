@@ -1,5 +1,6 @@
 # Built application files
 /target/
+/bin/
 
 # Temporary files
 /tmp/

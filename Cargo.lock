@@ -406,9 +406,11 @@ name = "chord-lens"
 version = "0.1.0"
 dependencies = [
  "atomic_float",
+ "crossbeam",
  "nih_plug",
  "nih_plug_egui",
  "parking_lot",
+ "serde",
 ]
 
 [[package]]
