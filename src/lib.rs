@@ -32,18 +32,23 @@
 
 mod chord;
 mod editor;
+mod key_detection;
 #[cfg(test)]
 mod tests;
 
 use chord::{detect, ChordInfo};
 use editor::{EDITOR_HEIGHT, EDITOR_WIDTH};
+use key_detection::{detect_key, DetectedKey, KeyEstimate, ScaleMode};
 
 use nih_plug::prelude::*;
 use nih_plug_egui::EguiState;
 use parking_lot::RwLock;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+const KEY_HISTORY_LIMIT: usize = 48;
+const HELD_NOTE_HISTORY_STEP_SECS: f32 = 0.080;
 
 #[derive(Debug, PartialEq, Eq, Enum, Clone, Copy)]
 pub enum KeyRoot {
@@ -155,6 +160,63 @@ impl KeyMode {
     }
 }
 
+impl From<KeyMode> for ScaleMode {
+    fn from(value: KeyMode) -> Self {
+        match value {
+            KeyMode::Major => ScaleMode::Major,
+            KeyMode::Minor => ScaleMode::Minor,
+            KeyMode::Dorian => ScaleMode::Dorian,
+            KeyMode::Phrygian => ScaleMode::Phrygian,
+            KeyMode::Lydian => ScaleMode::Lydian,
+            KeyMode::Mixolydian => ScaleMode::Mixolydian,
+            KeyMode::Locrian => ScaleMode::Locrian,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Enum, Clone, Copy)]
+pub enum KeyResponsiveness {
+    #[name = "Stable"]
+    Stable,
+    #[name = "Balanced"]
+    Balanced,
+    #[name = "Reactive"]
+    Reactive,
+}
+
+impl KeyResponsiveness {
+    pub fn display_switch_secs(&self) -> f32 {
+        match self {
+            KeyResponsiveness::Stable => 0.280,
+            KeyResponsiveness::Balanced => 0.180,
+            KeyResponsiveness::Reactive => 0.100,
+        }
+    }
+
+    pub fn key_switch_margin(&self, miss_weight: i32) -> i32 {
+        let base = if miss_weight <= 6 {
+            64
+        } else if miss_weight <= 14 {
+            36
+        } else {
+            18
+        };
+        match self {
+            KeyResponsiveness::Stable => base + 20,
+            KeyResponsiveness::Balanced => base,
+            KeyResponsiveness::Reactive => (base - 10).max(8),
+        }
+    }
+
+    pub fn mode_switch_margin(&self) -> i32 {
+        match self {
+            KeyResponsiveness::Stable => 34,
+            KeyResponsiveness::Balanced => 24,
+            KeyResponsiveness::Reactive => 14,
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct ChordHistoryEntry {
     pub root: String,
@@ -169,19 +231,39 @@ pub struct ChordState {
     pub key_text: String,
     pub scale_root: u8,
     pub scale_intervals: Vec<i32>,
+    pub key_confidence: u8,
     pub nashville_text: String,
     pub chord_history: Vec<ChordHistoryEntry>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct KeyDisplayState {
+    key: Option<DetectedKey>,
+    confidence: u8,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct KeyCandidate {
+    estimate: KeyEstimate,
+}
+
+#[derive(Default)]
+pub(crate) struct KeyHistory {
+    active_notes: HashMap<u8, u32>,
+    midi: VecDeque<u8>,
+    chords: VecDeque<ChordHistoryEntry>,
 }
 
 pub struct ChordLens {
     params: Arc<ChordLensParams>,
     chord_state: Arc<RwLock<ChordState>>,
-    active_notes: HashSet<u8>,
-    history_midi: VecDeque<u8>,
-    last_detected_key: String,
+    key_history: KeyHistory,
+    internal_detected_key: Option<DetectedKey>,
+    displayed_key_state: KeyDisplayState,
+    pending_display_key_state: KeyDisplayState,
+    pending_display_samples: u32,
     debounce_samples_remaining: u32,
     notes_changed: bool,
-    history_chords: VecDeque<ChordHistoryEntry>,
     last_pushed_chord: String,
     current_stable_chord: String,
     stable_samples: u32,
@@ -196,6 +278,8 @@ pub struct ChordLensParams {
     pub key_root: EnumParam<KeyRoot>,
     #[id = "force_m"]
     pub key_mode: EnumParam<KeyMode>,
+    #[id = "key_resp"]
+    pub key_responsiveness: EnumParam<KeyResponsiveness>,
     #[id = "show_nashville"]
     pub show_nashville: BoolParam,
     #[id = "allow_rootless"]
@@ -210,6 +294,7 @@ impl Default for ChordLensParams {
             editor_state: EguiState::from_size(EDITOR_WIDTH, EDITOR_HEIGHT),
             key_root: EnumParam::new("Force Root", KeyRoot::Auto),
             key_mode: EnumParam::new("Force Mode", KeyMode::Major),
+            key_responsiveness: EnumParam::new("Key Tracking", KeyResponsiveness::Balanced),
             show_nashville: BoolParam::new("Nashville Numbers", true),
             allow_rootless: BoolParam::new("Root-less Voicings", false),
             show_history: BoolParam::new("Chord History", false),
@@ -222,17 +307,136 @@ impl Default for ChordLens {
         Self {
             params: Arc::new(ChordLensParams::default()),
             chord_state: Arc::new(RwLock::new(ChordState::default())),
-            active_notes: HashSet::new(),
-            history_midi: VecDeque::new(),
-            last_detected_key: String::from("Unknown"),
+            key_history: KeyHistory::default(),
+            internal_detected_key: None,
+            displayed_key_state: KeyDisplayState::default(),
+            pending_display_key_state: KeyDisplayState::default(),
+            pending_display_samples: 0,
             debounce_samples_remaining: 0,
             notes_changed: false,
-            history_chords: VecDeque::new(),
             last_pushed_chord: String::new(),
             current_stable_chord: String::new(),
             stable_samples: 0,
             reset_history: Arc::new(AtomicBool::new(false)),
         }
+    }
+}
+
+impl KeyHistory {
+    fn push_note(history: &mut VecDeque<u8>, note: u8) {
+        history.push_back(note);
+        if history.len() > KEY_HISTORY_LIMIT {
+            history.pop_front();
+        }
+    }
+
+    fn note_on(&mut self, note: u8) {
+        self.active_notes.insert(note, 0);
+        Self::push_note(&mut self.midi, note);
+    }
+
+    fn note_off(&mut self, note: u8) {
+        self.active_notes.remove(&note);
+    }
+
+    fn active_note_list(&self) -> Vec<u8> {
+        self.active_notes.keys().copied().collect()
+    }
+
+    fn lowest_note(&self) -> Option<u8> {
+        self.active_notes.keys().copied().min()
+    }
+
+    fn note_history(&self) -> &VecDeque<u8> {
+        &self.midi
+    }
+
+    fn chord_history(&self) -> &VecDeque<ChordHistoryEntry> {
+        &self.chords
+    }
+
+    fn chord_history_vec(&self) -> Vec<ChordHistoryEntry> {
+        self.chords.iter().cloned().collect()
+    }
+
+    fn push_chord(&mut self, entry: ChordHistoryEntry) {
+        self.chords.push_back(entry);
+        if self.chords.len() > 16 {
+            self.chords.pop_front();
+        }
+    }
+
+    fn clear(&mut self) {
+        self.active_notes.clear();
+        self.midi.clear();
+        self.chords.clear();
+    }
+}
+
+pub(crate) fn accumulate_held_note_history(
+    key_history: &mut KeyHistory,
+    buffer_samples: u32,
+    sample_rate: f32,
+) {
+    let sustain_step_samples = (HELD_NOTE_HISTORY_STEP_SECS * sample_rate) as u32;
+    if sustain_step_samples == 0 {
+        return;
+    }
+
+    for (&note, held_samples) in key_history.active_notes.iter_mut() {
+        let previous_steps = *held_samples / sustain_step_samples;
+        *held_samples = held_samples.saturating_add(buffer_samples);
+        let current_steps = *held_samples / sustain_step_samples;
+        let new_steps = current_steps.saturating_sub(previous_steps).min(2);
+
+        for _ in 0..new_steps {
+            KeyHistory::push_note(&mut key_history.midi, note);
+        }
+    }
+}
+
+pub(crate) fn update_displayed_key(
+    displayed: &mut KeyDisplayState,
+    pending: &mut KeyDisplayState,
+    pending_samples: &mut u32,
+    internal: KeyCandidate,
+    buffer_samples: u32,
+    sample_rate: f32,
+    switch_secs: f32,
+) {
+    let Some(internal_key) = internal.estimate.key else {
+        return;
+    };
+
+    if displayed.key.is_none() {
+        displayed.key = Some(internal_key);
+        displayed.confidence = internal.estimate.confidence;
+        *pending = KeyDisplayState::default();
+        *pending_samples = 0;
+        return;
+    }
+
+    if displayed.key == Some(internal_key) {
+        displayed.confidence = internal.estimate.confidence;
+        *pending = KeyDisplayState::default();
+        *pending_samples = 0;
+        return;
+    }
+
+    if pending.key != Some(internal_key) {
+        pending.key = Some(internal_key);
+        pending.confidence = internal.estimate.confidence;
+        *pending_samples = buffer_samples;
+    } else {
+        pending.confidence = internal.estimate.confidence;
+        *pending_samples = pending_samples.saturating_add(buffer_samples);
+    }
+
+    let switch_threshold = (switch_secs * sample_rate) as u32;
+    if *pending_samples >= switch_threshold {
+        *displayed = pending.clone();
+        *pending = KeyDisplayState::default();
+        *pending_samples = 0;
     }
 }
 
@@ -271,20 +475,16 @@ impl Plugin for ChordLens {
             match event {
                 NoteEvent::NoteOn { note, velocity, .. } => {
                     if velocity > 0.0 {
-                        self.active_notes.insert(note);
+                        self.key_history.note_on(note);
                         changed = true;
-                        self.history_midi.push_back(note);
-                        if self.history_midi.len() > 32 {
-                            self.history_midi.pop_front();
-                        }
                     } else {
-                        self.active_notes.remove(&note);
+                        self.key_history.note_off(note);
                         changed = true;
                     }
                     context.send_event(event);
                 }
                 NoteEvent::NoteOff { note, .. } | NoteEvent::Choke { note, .. } => {
-                    self.active_notes.remove(&note);
+                    self.key_history.note_off(note);
                     changed = true;
                     context.send_event(event);
                 }
@@ -295,6 +495,7 @@ impl Plugin for ChordLens {
         }
 
         let sample_rate = context.transport().sample_rate;
+        accumulate_held_note_history(&mut self.key_history, _buffer.samples() as u32, sample_rate);
         let debounce_threshold = (0.025 * sample_rate) as u32; // Fixed 25ms internal debounce
 
         if changed {
@@ -314,41 +515,80 @@ impl Plugin for ChordLens {
         }
 
         if self.reset_history.swap(false, Ordering::Relaxed) {
-            self.history_midi.clear();
-            self.history_chords.clear();
+            self.key_history.clear();
             self.last_pushed_chord.clear();
             self.current_stable_chord.clear();
-            self.last_detected_key = String::from("Unknown");
+            self.internal_detected_key = None;
+            self.displayed_key_state = KeyDisplayState::default();
+            self.pending_display_key_state = KeyDisplayState::default();
+            self.pending_display_samples = 0;
             run_detection = true;
         }
 
         if run_detection {
-            let notes: Vec<u8> = self.active_notes.iter().copied().collect();
+            let notes = self.key_history.active_note_list();
             let root_param = self.params.key_root.value();
             let mode_param = self.params.key_mode.value();
+            let responsiveness = self.params.key_responsiveness.value();
 
-            let (_, scale_root, scale_intervals) = if root_param == KeyRoot::Auto {
-                chord::detect_scale(
-                    &self.history_midi,
-                    notes.iter().copied().min(),
-                    &self.last_detected_key,
+            let key_estimate = if root_param == KeyRoot::Auto {
+                detect_key(
+                    self.key_history.note_history(),
+                    self.key_history.lowest_note(),
+                    self.internal_detected_key,
+                    self.key_history.chord_history(),
+                    responsiveness,
                 )
             } else {
-                (String::new(), root_param.pc_val(), mode_param.intervals())
+                KeyEstimate {
+                    key: Some(DetectedKey {
+                        root: root_param.pc_val(),
+                        mode: mode_param.into(),
+                    }),
+                    confidence: 100,
+                }
             };
 
-            let chord_info = detect(&notes, scale_root, self.params.allow_rootless.value());
-            let key_text = if root_param == KeyRoot::Auto {
-                let (auto_key, _, _) = chord::detect_scale(
-                    &self.history_midi,
-                    notes.iter().copied().min(),
-                    &self.last_detected_key,
-                );
-                self.last_detected_key = auto_key.clone();
-                format!("Detected: {}", auto_key)
-            } else {
-                format!("User: {} {}", root_param.as_str(), mode_param.as_str())
-            };
+            let (display_scale_root, display_scale_intervals, key_text, key_confidence) =
+                if root_param == KeyRoot::Auto {
+                    self.internal_detected_key = key_estimate.key;
+                    update_displayed_key(
+                        &mut self.displayed_key_state,
+                        &mut self.pending_display_key_state,
+                        &mut self.pending_display_samples,
+                        KeyCandidate {
+                            estimate: key_estimate,
+                        },
+                        _buffer.samples() as u32,
+                        sample_rate,
+                        responsiveness.display_switch_secs(),
+                    );
+                    let displayed_key = self.displayed_key_state.key;
+                    (
+                        displayed_key.map_or(0, |key| key.root),
+                        displayed_key
+                            .map(|key| key.intervals().to_vec())
+                            .unwrap_or_default(),
+                        displayed_key
+                            .map(|key| format!("Detected: {}", key.display_name()))
+                            .unwrap_or_else(|| "Detected: Unknown".to_string()),
+                        self.displayed_key_state.confidence,
+                    )
+                } else {
+                    let forced_key = key_estimate.key.expect("forced key must exist");
+                    (
+                        forced_key.root,
+                        forced_key.intervals().to_vec(),
+                        format!("User: {} {}", root_param.as_str(), mode_param.as_str()),
+                        key_estimate.confidence,
+                    )
+                };
+
+            let chord_info = detect(
+                &notes,
+                display_scale_root,
+                self.params.allow_rootless.value(),
+            );
 
             let nashville_text = chord_info.degree.clone();
             let current_full_name = format!("{}", chord_info);
@@ -364,15 +604,12 @@ impl Plugin for ChordLens {
                     && !self.current_stable_chord.is_empty()
                     && self.current_stable_chord != "–"
                 {
-                    self.history_chords.push_back(ChordHistoryEntry {
+                    self.key_history.push_chord(ChordHistoryEntry {
                         root: chord_info.root.clone(),
                         quality: chord_info.quality.clone(),
                         omitted: chord_info.omitted.clone(),
                         slash: chord_info.slash.clone(),
                     });
-                    if self.history_chords.len() > 16 {
-                        self.history_chords.pop_front();
-                    }
                     self.last_pushed_chord = self.current_stable_chord.clone();
                 }
             }
@@ -380,10 +617,11 @@ impl Plugin for ChordLens {
             *self.chord_state.write() = ChordState {
                 chord_info,
                 key_text,
-                scale_root,
-                scale_intervals,
+                scale_root: display_scale_root,
+                scale_intervals: display_scale_intervals,
+                key_confidence,
                 nashville_text,
-                chord_history: self.history_chords.iter().cloned().collect(),
+                chord_history: self.key_history.chord_history_vec(),
             };
         } else {
             // Even if we didn't run full detection, update stability for history tracking
@@ -400,18 +638,15 @@ impl Plugin for ChordLens {
                     && !self.current_stable_chord.is_empty()
                     && self.current_stable_chord != "–"
                 {
-                    self.history_chords.push_back(ChordHistoryEntry {
+                    self.key_history.push_chord(ChordHistoryEntry {
                         root: cur_info.root.clone(),
                         quality: cur_info.quality.clone(),
                         omitted: cur_info.omitted.clone(),
                         slash: cur_info.slash.clone(),
                     });
-                    if self.history_chords.len() > 16 {
-                        self.history_chords.pop_front();
-                    }
                     self.last_pushed_chord = self.current_stable_chord.clone();
                     let mut state = self.chord_state.write();
-                    state.chord_history = self.history_chords.iter().cloned().collect();
+                    state.chord_history = self.key_history.chord_history_vec();
                 }
             }
         }

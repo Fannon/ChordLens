@@ -8,6 +8,12 @@ This file is for user-visible changes. Contributor workflow belongs in `CONTRIBU
 ### Changed
 - **More Reliable Release Packaging:** Release artifacts now use NIH-plug's native bundling flow for VST3 and CLAP packaging instead of simple renamed library files.
 - **Footer Spacing Polish:** Chord history now sits closer to the bottom edge with more balanced spacing, and the note list is positioned slightly lower for better visual alignment.
+- **Smarter Auto Key Tracking:** Key detection now reacts faster to real tonal changes while staying steadier through brief wrong notes, passing tones, and bluesy color notes.
+- **Held Notes Matter More:** Sustained notes now reinforce the detected key instead of letting short accidental notes dominate the result.
+- **Less Key Flicker:** Auto-detected keys now confirm before the display changes, so the visible key stays more stable during transitions.
+- **More Musical Context:** Repeated tonic, dominant, and common cadential motion now help the detector prefer musically likely keys.
+- **Improved Mode Stability:** Auto detection is more conservative about changing mode when the tonal root still appears stable.
+- **Host-Controllable Key Tracking:** Added a DAW automatable `Key Tracking` parameter with `Stable`, `Balanced`, and `Reactive` response modes.
 
 ## [0.1.6] - 2026-04-04
 

@@ -52,6 +52,13 @@ Those scripts are convenience wrappers. They use NIH-plug's bundler, copy bundle
 
 The current automated coverage is mostly unit-level chord detection logic in [`src/tests.rs`](/C:/Development/chord-lens/src/tests.rs). There is no host-level automated test for plugin loading, editor startup, parameter persistence, or DAW interoperability.
 
+Hidden DAW-only parameter:
+
+- `Key Tracking` is exposed as a plugin parameter for host automation and preset/state recall, but it is intentionally not surfaced in the egui editor.
+- Values: `Stable`, `Balanced`, `Reactive`.
+- Default: `Balanced`.
+- It affects both internal key-switch hysteresis and the displayed-key confirmation time.
+
 Manual smoke testing matters:
 
 1. Build a release artifact.
