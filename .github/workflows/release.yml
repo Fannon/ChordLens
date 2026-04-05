@@ -5,6 +5,8 @@ on:
     branches: [ "main" ]
     tags:
       - 'v*'
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
 
 env:
@@ -16,6 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install Linux Dependencies
         run: |
@@ -62,6 +66,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
       
       - name: Install Linux Dependencies
         if: matrix.os == 'ubuntu-latest'
