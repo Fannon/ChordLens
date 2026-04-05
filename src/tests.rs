@@ -3,11 +3,110 @@ use crate::detect;
 use crate::key_detection::{detect_key, DetectedKey, ScaleMode};
 use crate::update_displayed_key;
 use crate::ChordHistoryEntry;
+use crate::ChordLens;
 use crate::KeyCandidate;
 use crate::KeyDisplayState;
 use crate::KeyHistory;
 use crate::KeyResponsiveness;
+use nih_plug::context::process::{ProcessContext, Transport};
+use nih_plug::context::PluginApi;
+use nih_plug::prelude::{AuxiliaryBuffers, Buffer, NoteEvent, Plugin, ProcessStatus};
 use std::collections::VecDeque;
+use std::sync::atomic::Ordering;
+
+const TEST_SAMPLE_RATE: f32 = 48_000.0;
+const TEST_BUFFER_SAMPLES: usize = 512;
+
+struct TestProcessContext {
+    transport: Transport,
+    input_events: VecDeque<NoteEvent<()>>,
+    output_events: Vec<NoteEvent<()>>,
+}
+
+impl TestProcessContext {
+    fn new(events: Vec<NoteEvent<()>>) -> Self {
+        Self {
+            transport: test_transport(TEST_SAMPLE_RATE),
+            input_events: events.into(),
+            output_events: Vec::new(),
+        }
+    }
+}
+
+impl ProcessContext<ChordLens> for TestProcessContext {
+    fn plugin_api(&self) -> PluginApi {
+        PluginApi::Standalone
+    }
+
+    fn execute_background(&self, _task: <ChordLens as Plugin>::BackgroundTask) {}
+
+    fn execute_gui(&self, _task: <ChordLens as Plugin>::BackgroundTask) {}
+
+    fn transport(&self) -> &Transport {
+        &self.transport
+    }
+
+    fn next_event(&mut self) -> Option<NoteEvent<()>> {
+        self.input_events.pop_front()
+    }
+
+    fn send_event(&mut self, event: NoteEvent<()>) {
+        self.output_events.push(event);
+    }
+
+    fn set_latency_samples(&self, _samples: u32) {}
+
+    fn set_current_voice_capacity(&self, _capacity: u32) {}
+}
+
+fn test_transport(sample_rate: f32) -> Transport {
+    let mut transport = unsafe { std::mem::MaybeUninit::<Transport>::zeroed().assume_init() };
+    transport.sample_rate = sample_rate;
+    transport
+}
+
+fn empty_test_buffer() -> Buffer<'static> {
+    let mut buffer = Buffer::default();
+    unsafe {
+        buffer.set_slices(TEST_BUFFER_SAMPLES, |output_slices| output_slices.clear());
+    }
+    buffer
+}
+
+fn run_process(plugin: &mut ChordLens, events: Vec<NoteEvent<()>>) -> Vec<NoteEvent<()>> {
+    let mut buffer = empty_test_buffer();
+    let mut aux_inputs = [];
+    let mut aux_outputs = [];
+    let mut aux = AuxiliaryBuffers {
+        inputs: &mut aux_inputs,
+        outputs: &mut aux_outputs,
+    };
+    let mut context = TestProcessContext::new(events);
+    let status = plugin.process(&mut buffer, &mut aux, &mut context);
+    assert_eq!(status, ProcessStatus::Normal);
+    context.output_events
+}
+
+fn note_on(note: u8) -> NoteEvent<()> {
+    NoteEvent::NoteOn {
+        timing: 0,
+        voice_id: None,
+        channel: 0,
+        note,
+        velocity: 1.0,
+    }
+}
+
+fn process_until_settled(
+    plugin: &mut ChordLens,
+    leading_events: Vec<NoteEvent<()>>,
+    extra_buffers: usize,
+) {
+    run_process(plugin, leading_events);
+    for _ in 0..extra_buffers {
+        run_process(plugin, Vec::new());
+    }
+}
 
 fn chord_str(notes: &[u8], scale_root: u8) -> String {
     let info = detect(notes, scale_root, false);
@@ -741,4 +840,61 @@ fn test_regression_fixture_minor_phrase_stays_in_a_minor() {
             mode: ScaleMode::Minor
         })
     );
+}
+
+#[test]
+fn test_process_path_detects_chord_and_updates_state() {
+    let mut plugin = ChordLens::default();
+
+    process_until_settled(&mut plugin, vec![note_on(60), note_on(64), note_on(67)], 3);
+
+    let state = plugin.chord_state.read().clone();
+    assert_eq!(state.chord_info.root, "C");
+    assert_eq!(state.chord_info.quality, "");
+    assert_eq!(state.nashville_text, "I");
+    assert!(!state.chromatic_mode);
+    assert!(state.key_text.starts_with("Detected:"));
+}
+
+#[test]
+fn test_process_path_chromatic_mode_keeps_chord_detection_and_disables_nashville() {
+    let mut plugin = ChordLens {
+        params: std::sync::Arc::new(crate::ChordLensParams {
+            key_root: nih_plug::prelude::EnumParam::new("Force Root", crate::KeyRoot::Chromatic),
+            ..crate::ChordLensParams::default()
+        }),
+        ..ChordLens::default()
+    };
+
+    process_until_settled(&mut plugin, vec![note_on(60), note_on(64), note_on(67)], 3);
+
+    let state = plugin.chord_state.read().clone();
+    assert_eq!(state.key_text, "User: Chromatic");
+    assert_eq!(state.chord_info.root, "C");
+    assert_eq!(state.chord_info.quality, "");
+    assert_eq!(state.nashville_text, "");
+    assert!(state.chromatic_mode);
+    assert!(state.scale_intervals.is_empty());
+}
+
+#[test]
+fn test_process_path_reset_history_clears_runtime_state() {
+    let mut plugin = ChordLens::default();
+
+    process_until_settled(&mut plugin, vec![note_on(60), note_on(64), note_on(67)], 14);
+    assert!(!plugin.key_history.note_history().is_empty());
+    assert!(!plugin.key_history.chord_history().is_empty());
+    assert!(!plugin.chord_state.read().chord_history.is_empty());
+
+    plugin.reset_history.store(true, Ordering::Relaxed);
+    run_process(&mut plugin, Vec::new());
+
+    let state = plugin.chord_state.read().clone();
+    assert!(plugin.key_history.active_note_list().is_empty());
+    assert!(plugin.key_history.note_history().is_empty());
+    assert!(plugin.key_history.chord_history().is_empty());
+    assert!(plugin.internal_detected_key.is_none());
+    assert!(plugin.displayed_key_state.key.is_none());
+    assert!(plugin.pending_display_key_state.key.is_none());
+    assert!(state.chord_history.is_empty());
 }

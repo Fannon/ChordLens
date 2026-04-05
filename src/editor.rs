@@ -213,15 +213,15 @@ fn draw_ui(
                             ui.add_space(8.0);
                             if ui
                                 .add(
-                                    egui::Button::new(egui::RichText::new("Clear").size(11.0))
+                                    egui::Button::new(egui::RichText::new("Reset").size(11.0))
                                         .fill(Color32::from_rgb(45, 45, 55))
-                                        .min_size(Vec2::new(42.0, 22.0)),
+                                        .min_size(Vec2::new(46.0, 22.0)),
                                 )
                                 .clicked()
                             {
                                 reset_history.store(true, Ordering::Relaxed);
                             }
-                            ui.add_space(4.0); // 4px padding between Clear and History
+                            ui.add_space(4.0); // 4px padding between Reset and History
                             if ui.add(h_btn).clicked() {
                                 setter.begin_set_parameter(&params.show_history);
                                 setter.set_parameter(&params.show_history, !show_h);

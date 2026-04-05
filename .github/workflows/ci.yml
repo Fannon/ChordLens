@@ -72,6 +72,16 @@ jobs:
       - name: Bundle Release Artifacts
         run: cargo xtask bundle chord-lens --release
 
+      - name: Install pluginval
+        if: matrix.os == 'windows-latest'
+        shell: cmd
+        run: choco install pluginval -y --no-progress
+
+      - name: Validate VST3 with pluginval
+        if: matrix.os == 'windows-latest'
+        shell: cmd
+        run: pluginval --validate-in-process --strictness-level 5 --output-dir pluginval-logs --validate target\bundled\ChordLens.vst3
+
       - name: Prepare Artifacts
         shell: pwsh
         run: |
@@ -79,6 +89,14 @@ jobs:
           Copy-Item -Recurse -Force "target/bundled/ChordLens.vst3" "dist/ChordLens/ChordLens.vst3"
           Copy-Item -Recurse -Force "target/bundled/ChordLens.clap" "dist/ChordLens/ChordLens.clap"
           Compress-Archive -Path dist/ChordLens -DestinationPath "dist/ChordLens_${{ matrix.os-name }}.zip" -Force
+
+      - name: Upload pluginval logs
+        if: always() && matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-pluginval-logs
+          path: pluginval-logs/**
+          if-no-files-found: ignore
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4

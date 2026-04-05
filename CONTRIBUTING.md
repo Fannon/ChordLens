@@ -52,6 +52,12 @@ Those scripts are convenience wrappers. They use NIH-plug's bundler, copy bundle
 
 The current automated coverage is mostly unit-level chord detection logic in [`src/tests.rs`](/C:/Development/chord-lens/src/tests.rs). There is no host-level automated test for plugin loading, editor startup, parameter persistence, or DAW interoperability.
 
+CI host-smoke coverage:
+
+- GitHub Actions now runs `pluginval` against the bundled Windows VST3 after `cargo xtask bundle chord-lens --release`.
+- That gives one binary-loading validation layer in CI beyond the Rust unit/process tests.
+- On failures, inspect the uploaded `windows-pluginval-logs` artifact from the workflow run.
+
 Hidden DAW-only parameter:
 
 - `Key Tracking` is exposed as a plugin parameter for host automation and preset/state recall, but it is intentionally not surfaced in the egui editor.
