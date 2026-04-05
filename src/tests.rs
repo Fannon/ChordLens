@@ -39,7 +39,18 @@ fn detect_key_with_mode(
     chord_history: &VecDeque<ChordHistoryEntry>,
     responsiveness: KeyResponsiveness,
 ) -> crate::key_detection::KeyEstimate {
-    detect_key(history, bass, cur_key, chord_history, responsiveness)
+    let mut evidence = [0.0f32; 12];
+    for &note in history {
+        evidence[(note % 12) as usize] += 6.0;
+    }
+    detect_key(
+        &evidence,
+        history,
+        bass,
+        cur_key,
+        chord_history,
+        responsiveness,
+    )
 }
 
 fn detect_scale_balanced(
@@ -164,6 +175,12 @@ fn test_inversions_and_slashes() {
 }
 
 #[test]
+fn test_key_root_chromatic_label_and_pc() {
+    assert_eq!(crate::KeyRoot::Chromatic.as_str(), "Chromatic");
+    assert_eq!(crate::KeyRoot::Chromatic.pc_val(), 0);
+}
+
+#[test]
 fn test_scale_detection_keeps_current_key_for_single_outlier() {
     let history = VecDeque::from(vec![60, 64, 67, 69, 71, 72, 66]);
     let (key, root, intervals) = detect_scale_balanced(
@@ -253,6 +270,40 @@ fn test_held_notes_cap_history_bursts_per_buffer() {
 }
 
 #[test]
+fn test_continuous_decay_reduces_old_note_evidence() {
+    let mut key_history = KeyHistory::default();
+    key_history.note_on(60);
+    let initial = key_history.note_evidence()[0];
+
+    accumulate_held_note_history(&mut key_history, 48_000, 48_000.0);
+    let decayed = key_history.note_evidence()[0];
+
+    assert!(decayed < initial + crate::HELD_NOTE_EVIDENCE_WEIGHT);
+    assert!(decayed > 0.0);
+}
+
+#[test]
+fn test_key_history_clear_resets_notes_evidence_and_chords() {
+    let mut key_history = KeyHistory::default();
+    key_history.note_on(60);
+    key_history.push_chord(ChordHistoryEntry {
+        root: "C".to_string(),
+        quality: String::new(),
+        omitted: String::new(),
+        slash: String::new(),
+    });
+
+    key_history.clear();
+
+    assert!(key_history.note_history().is_empty());
+    assert!(key_history.chord_history().is_empty());
+    assert!(key_history
+        .note_evidence()
+        .iter()
+        .all(|&value| value == 0.0));
+}
+
+#[test]
 fn test_displayed_key_initializes_immediately() {
     let mut displayed = KeyDisplayState {
         key: None,
@@ -272,6 +323,8 @@ fn test_displayed_key_initializes_immediately() {
                     mode: ScaleMode::Major,
                 }),
                 confidence: 88,
+                #[cfg(debug_assertions)]
+                diagnostics: String::new(),
             },
         },
         64,
@@ -313,6 +366,8 @@ fn test_displayed_key_requires_persistence_before_switching() {
                     mode: ScaleMode::Major,
                 }),
                 confidence: 72,
+                #[cfg(debug_assertions)]
+                diagnostics: String::new(),
             },
         },
         2_000,
@@ -346,6 +401,8 @@ fn test_displayed_key_requires_persistence_before_switching() {
                     mode: ScaleMode::Major,
                 }),
                 confidence: 76,
+                #[cfg(debug_assertions)]
+                diagnostics: String::new(),
             },
         },
         7_000,
@@ -387,6 +444,8 @@ fn test_displayed_key_clears_pending_when_internal_returns() {
                     mode: ScaleMode::Major,
                 }),
                 confidence: 70,
+                #[cfg(debug_assertions)]
+                diagnostics: String::new(),
             },
         },
         2_000,
@@ -404,6 +463,8 @@ fn test_displayed_key_clears_pending_when_internal_returns() {
                     mode: ScaleMode::Major,
                 }),
                 confidence: 91,
+                #[cfg(debug_assertions)]
+                diagnostics: String::new(),
             },
         },
         2_000,
@@ -510,8 +571,11 @@ fn test_scale_detection_recognizes_streamed_arpeggio_as_same_key() {
 
 #[test]
 fn test_scale_detection_distinguishes_tonicization_from_modulation() {
-    let history = VecDeque::from(vec![60, 64, 67, 62, 66, 69, 67, 71, 74, 60, 64, 67]);
-    let chord_history = make_chord_history(&[("C", ""), ("D", "7"), ("G", ""), ("C", "")]);
+    let history = VecDeque::from(vec![
+        60, 64, 67, 60, 64, 67, 62, 66, 69, 67, 71, 74, 60, 64, 67, 60, 64, 67,
+    ]);
+    let chord_history =
+        make_chord_history(&[("C", ""), ("C", ""), ("D", "7"), ("G", ""), ("C", "")]);
     let (key, root, _) = detect_scale_balanced(
         &history,
         Some(60),
@@ -547,6 +611,25 @@ fn test_key_detection_reports_high_confidence_for_clear_tonal_center() {
         })
     );
     assert!(estimate.confidence >= 50);
+    #[cfg(debug_assertions)]
+    assert!(!estimate.diagnostics.is_empty());
+}
+
+#[test]
+fn test_key_detection_returns_none_for_empty_input() {
+    let estimate = detect_key(
+        &[0.0; 12],
+        &VecDeque::new(),
+        None,
+        None,
+        &VecDeque::new(),
+        KeyResponsiveness::Balanced,
+    );
+
+    assert!(estimate.key.is_none());
+    assert_eq!(estimate.confidence, 0);
+    #[cfg(debug_assertions)]
+    assert!(estimate.diagnostics.is_empty());
 }
 
 #[test]
@@ -558,6 +641,8 @@ fn test_responsiveness_changes_switch_behavior() {
                 mode: ScaleMode::Major,
             }),
             confidence: 75,
+            #[cfg(debug_assertions)]
+            diagnostics: String::new(),
         },
     };
 
@@ -579,7 +664,7 @@ fn test_responsiveness_changes_switch_behavior() {
         &mut stable_display,
         &mut stable_pending,
         &mut stable_samples,
-        candidate,
+        candidate.clone(),
         6_000,
         48_000.0,
         KeyResponsiveness::Stable.display_switch_secs(),

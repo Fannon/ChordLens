@@ -80,7 +80,20 @@ fn style_egui(ctx: &egui::Context) {
 
 const NOTE_OFF: Color32 = Color32::from_rgb(100, 100, 110);
 
-fn get_note_color(pc: u8, scale_root: u8, scale_intervals: &[i32]) -> Color32 {
+fn get_note_color(
+    pc: u8,
+    scale_root: u8,
+    scale_intervals: &[i32],
+    chromatic_mode: bool,
+    role: &crate::chord::NoteRole,
+) -> Color32 {
+    if chromatic_mode {
+        return if matches!(role, crate::chord::NoteRole::Root) {
+            Color32::from_rgb(120, 220, 180)
+        } else {
+            NOTE_TEXT
+        };
+    }
     let rel = (pc as i32 + 12 - scale_root as i32) % 12;
     if rel == 0 {
         return Color32::from_rgb(120, 220, 180);
@@ -143,6 +156,7 @@ fn draw_ui(
                                 let mut changed = false;
                                 for r in [
                                     crate::KeyRoot::Auto,
+                                    crate::KeyRoot::Chromatic,
                                     crate::KeyRoot::C,
                                     crate::KeyRoot::CSharp,
                                     crate::KeyRoot::D,
@@ -208,6 +222,18 @@ fn draw_ui(
                                 reset_history.store(true, Ordering::Relaxed);
                             }
                             ui.add_space(4.0); // 4px padding between Clear and History
+                            if ui.add(h_btn).clicked() {
+                                setter.begin_set_parameter(&params.show_history);
+                                setter.set_parameter(&params.show_history, !show_h);
+                                setter.end_set_parameter(&params.show_history);
+                            }
+                        } else if root == crate::KeyRoot::Chromatic {
+                            ui.label(
+                                egui::RichText::new(&snapshot.key_text)
+                                    .color(Color32::from_rgb(120, 120, 130))
+                                    .size(16.0),
+                            );
+                            ui.add_space(8.0);
                             if ui.add(h_btn).clicked() {
                                 setter.begin_set_parameter(&params.show_history);
                                 setter.set_parameter(&params.show_history, !show_h);
@@ -301,7 +327,13 @@ fn draw_ui(
                             found
                         };
                         let root_color = if let Some(p) = root_pc {
-                            get_note_color(p, snapshot.scale_root, &snapshot.scale_intervals)
+                            get_note_color(
+                                p,
+                                snapshot.scale_root,
+                                &snapshot.scale_intervals,
+                                snapshot.chromatic_mode,
+                                &crate::chord::NoteRole::Root,
+                            )
                         } else {
                             CHORD_TEXT
                         };
@@ -421,6 +453,8 @@ fn draw_ui(
                                             p,
                                             snapshot.scale_root,
                                             &snapshot.scale_intervals,
+                                            snapshot.chromatic_mode,
+                                            &crate::chord::NoteRole::Root,
                                         )
                                     } else {
                                         CHORD_TEXT
@@ -500,7 +534,7 @@ fn draw_ui(
                                     halign: egui::Align::Center,
                                     ..Default::default()
                                 };
-                                for (i, (name, _)) in notes.iter().enumerate() {
+                                for (i, (name, role)) in notes.iter().enumerate() {
                                     let mut pc = 0;
                                     for p in 0..12 {
                                         if name.starts_with(crate::chord::pc_name(
@@ -514,6 +548,8 @@ fn draw_ui(
                                         pc,
                                         snapshot.scale_root,
                                         &snapshot.scale_intervals,
+                                        snapshot.chromatic_mode,
+                                        role,
                                     );
                                     let (note_part, octave_part) = if let Some(first_digit) =
                                         name.find(|c: char| c.is_ascii_digit() || c == '-')
@@ -575,7 +611,10 @@ fn draw_ui(
                         });
                     }
 
-                    if params.show_nashville.value() && !snapshot.nashville_text.is_empty() {
+                    if !snapshot.chromatic_mode
+                        && params.show_nashville.value()
+                        && !snapshot.nashville_text.is_empty()
+                    {
                         let nash_rect = ui.available_rect_before_wrap();
                         ui.allocate_new_ui(
                             egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
@@ -587,6 +626,24 @@ fn draw_ui(
                                     egui::RichText::new(&snapshot.nashville_text)
                                         .font(FontId::new(48.0, FontFamily::Proportional))
                                         .color(Color32::from_rgb(220, 220, 230)),
+                                );
+                            },
+                        );
+                    }
+
+                    #[cfg(debug_assertions)]
+                    if !snapshot.debug_key_diagnostics.is_empty() {
+                        let debug_rect = ui.available_rect_before_wrap();
+                        ui.allocate_new_ui(
+                            egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
+                                Pos2::new(debug_rect.min.x + 12.0, debug_rect.min.y + 4.0),
+                                Pos2::new(debug_rect.max.x - 12.0, debug_rect.max.y),
+                            )),
+                            |ui| {
+                                ui.label(
+                                    egui::RichText::new(&snapshot.debug_key_diagnostics)
+                                        .font(FontId::new(11.0, FontFamily::Monospace))
+                                        .color(Color32::from_rgb(110, 150, 170)),
                                 );
                             },
                         );

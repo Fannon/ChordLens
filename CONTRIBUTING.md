@@ -59,6 +59,11 @@ Hidden DAW-only parameter:
 - Default: `Balanced`.
 - It affects both internal key-switch hysteresis and the displayed-key confirmation time.
 
+Debug-only key diagnostics:
+
+- In debug builds, set `CHORDLENS_DEBUG_KEYS=1` before launching the host to show a small candidate summary in the plugin UI.
+- The diagnostics line includes the current confidence plus the top ranked key candidates and their scores.
+
 Manual smoke testing matters:
 
 1. Build a release artifact.

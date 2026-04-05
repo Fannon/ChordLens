@@ -3,6 +3,17 @@
 All notable changes to the **ChordLens** project will be documented in this file.
 This file is for user-visible changes. Contributor workflow belongs in `CONTRIBUTING.md`.
 
+## [0.1.8] - 2026-04-05
+
+### Added
+- **Chromatic Key Mode:** Added a `Chromatic` option next to `Auto` in the key selector for free chromatic note viewing without scale-based harmony context.
+
+### Changed
+- **Refined Key Tracking Engine:** Auto key detection now uses a more structured scoring pipeline with decaying note evidence, chord-context weighting, and confidence scoring for steadier musical results.
+- **Improved Debug Tuning Tools:** Debug builds can now show top key candidates and confidence in the plugin UI when `CHORDLENS_DEBUG_KEYS=1` is set.
+- **Chromatic Mode Display Behavior:** Chromatic mode now keeps normal chord detection and chord naming while disabling Nashville notation and scale-position note coloring.
+- **Chromatic Root Highlighting:** In chromatic mode, the detected root note still uses the main accent color so the display keeps a clear tonal anchor.
+
 ## [0.1.7] - 2026-04-05
 
 ### Changed

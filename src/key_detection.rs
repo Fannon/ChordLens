@@ -110,10 +110,12 @@ impl DetectedKey {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyEstimate {
     pub key: Option<DetectedKey>,
     pub confidence: u8,
+    #[cfg(debug_assertions)]
+    pub diagnostics: String,
 }
 
 #[derive(Clone, Copy)]
@@ -269,64 +271,52 @@ fn score_chord_history(key: DetectedKey, chord_history: &VecDeque<ChordHistoryEn
     score
 }
 
-fn weighted_pitch_counts(history: &VecDeque<u8>) -> [i32; 12] {
-    let mut counts = [0i32; 12];
-    let len = history.len();
-    for (i, &note) in history.iter().enumerate() {
-        let age = len - i - 1;
-        let weight = match age {
-            0..=3 => 6,
-            4..=7 => 4,
-            8..=15 => 2,
-            _ => 1,
-        };
-        counts[(note % 12) as usize] += weight;
-    }
-    counts
-}
-
 fn score_candidate(
     key: DetectedKey,
-    counts: &[i32; 12],
+    counts: &[f32; 12],
     history: &VecDeque<u8>,
     bass: Option<u8>,
     chord_history: &VecDeque<ChordHistoryEntry>,
 ) -> CandidateScore {
-    let mut score = key.mode.base_weight();
+    let mut score = key.mode.base_weight() as f32;
     let mut miss_weight = 0i32;
 
-    score += counts[key.root as usize] * 8;
+    score += counts[key.root as usize] * 8.0;
     let dominant = (key.root + 7) % 12;
     let mediant = if matches!(key.mode, ScaleMode::Minor | ScaleMode::MinPent) {
         (key.root + 3) % 12
     } else {
         (key.root + 4) % 12
     };
-    score += counts[dominant as usize] * 3;
-    score += counts[mediant as usize] * 2;
-    score += score_chord_history(key, chord_history);
+    score += counts[dominant as usize] * 3.0;
+    score += counts[mediant as usize] * 2.0;
+    score += score_chord_history(key, chord_history) as f32;
 
     if let Some(bass_note) = bass {
         let bass_pc = bass_note % 12;
         if bass_pc == key.root {
-            score += 24;
+            score += 24.0;
         } else if bass_pc == dominant {
-            score += 8;
+            score += 8.0;
         }
     }
 
     for (pc, &weight) in counts.iter().enumerate() {
-        if weight == 0 {
+        if weight <= 0.0 {
             continue;
         }
 
         let rel = (pc + 12 - key.root as usize) as i32 % 12;
         if key.intervals().contains(&rel) {
-            score += weight * 6;
+            score += weight * 6.0;
         } else {
             let contextual = is_contextual_outlier(rel, key.mode);
-            let penalty = if contextual { 3 } else { 8 };
-            miss_weight += if contextual { weight / 2 } else { weight };
+            let penalty = if contextual { 3.0 } else { 8.0 };
+            miss_weight += if contextual {
+                (weight / 2.0).round() as i32
+            } else {
+                weight.round() as i32
+            };
             score -= weight * penalty;
         }
     }
@@ -337,30 +327,30 @@ fn score_candidate(
             continue;
         }
         if is_passing_tone(history, idx, key) {
-            score += 6;
+            score += 6.0;
             miss_weight = miss_weight.saturating_sub(2);
         }
     }
 
     CandidateScore {
         key,
-        total_score: score,
+        total_score: score.round() as i32,
         miss_weight,
     }
 }
 
 fn score_candidates(
+    evidence: &[f32; 12],
     history: &VecDeque<u8>,
     bass: Option<u8>,
     chord_history: &VecDeque<ChordHistoryEntry>,
 ) -> Vec<CandidateScore> {
-    let counts = weighted_pitch_counts(history);
     let mut scored = Vec::with_capacity(12 * ALL_MODES.len());
     for root in 0..12u8 {
         for mode in ALL_MODES {
             scored.push(score_candidate(
                 DetectedKey { root, mode },
-                &counts,
+                evidence,
                 history,
                 bass,
                 chord_history,
@@ -413,24 +403,45 @@ fn confidence_from_scores(selected: CandidateScore, scored: &[CandidateScore]) -
     (40 + gap.min(50) - miss_penalty).clamp(0, 100) as u8
 }
 
+#[cfg(debug_assertions)]
+fn build_diagnostics(scored: &[CandidateScore], confidence: u8) -> String {
+    let mut lines = vec![format!("conf={}%", confidence)];
+    for candidate in scored.iter().take(3) {
+        lines.push(format!(
+            "{} [{} | miss={}]",
+            candidate.key.display_name(),
+            candidate.total_score,
+            candidate.miss_weight
+        ));
+    }
+    lines.join(" | ")
+}
+
 pub fn detect_key(
+    evidence: &[f32; 12],
     history: &VecDeque<u8>,
     bass: Option<u8>,
     current_key: Option<DetectedKey>,
     chord_history: &VecDeque<ChordHistoryEntry>,
     responsiveness: KeyResponsiveness,
 ) -> KeyEstimate {
-    if history.is_empty() {
+    let evidence_sum: f32 = evidence.iter().sum();
+    if history.is_empty() && evidence_sum <= 0.0 {
         return KeyEstimate {
             key: None,
             confidence: 0,
+            #[cfg(debug_assertions)]
+            diagnostics: String::new(),
         };
     }
 
-    let scored = score_candidates(history, bass, chord_history);
+    let scored = score_candidates(evidence, history, bass, chord_history);
     let selected = choose_key(&scored, current_key, responsiveness);
+    let confidence = confidence_from_scores(selected, &scored);
     KeyEstimate {
         key: Some(selected.key),
-        confidence: confidence_from_scores(selected, &scored),
+        confidence,
+        #[cfg(debug_assertions)]
+        diagnostics: build_diagnostics(&scored, confidence),
     }
 }
