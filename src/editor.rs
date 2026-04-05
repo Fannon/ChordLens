@@ -388,7 +388,7 @@ fn draw_ui(
                     if params.show_history.value() {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.add_space(6.0); // Right padding
-                            ui.add_space(10.0); // Vertical push down
+                            ui.add_space(6.0); // Match the bottom margin to the right padding
                             let history = &snapshot.chord_history;
                             if !history.is_empty() {
                                 let mut hist_job = egui::text::LayoutJob {
@@ -493,7 +493,7 @@ fn draw_ui(
                         });
                     } else {
                         ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                            ui.add_space(4.0);
+                            ui.add_space(8.0);
                             let notes = &snapshot.chord_info.active_notes;
                             if !notes.is_empty() {
                                 let mut note_job = egui::text::LayoutJob {

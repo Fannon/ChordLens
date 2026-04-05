@@ -3,10 +3,11 @@
 All notable changes to the **ChordLens** project will be documented in this file.
 This file is for user-visible changes. Contributor workflow belongs in `CONTRIBUTING.md`.
 
-## [Unreleased]
+## [0.1.7] - 2026-04-05
 
 ### Changed
 - **More Reliable Release Packaging:** Release artifacts now use NIH-plug's native bundling flow for VST3 and CLAP packaging instead of simple renamed library files.
+- **Footer Spacing Polish:** Chord history now sits closer to the bottom edge with more balanced spacing, and the note list is positioned slightly lower for better visual alignment.
 
 ## [0.1.6] - 2026-04-04
 
