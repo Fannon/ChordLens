@@ -1,10 +1,10 @@
-name: Release
+name: CI
 
 on:
   push:
-    tags:
-      - "v*"
-  workflow_dispatch:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -95,25 +95,3 @@ jobs:
         with:
           name: ${{ matrix.os-name }}-zip
           path: dist/*.zip
-
-  release:
-    name: Create GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: output
-          merge-multiple: true
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: output/*
-          generate_release_notes: true
-          draft: false
-          prerelease: false
