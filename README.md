@@ -1,34 +1,40 @@
 # ChordLens
 
-**ChordLens** is a clean MIDI chord and scale detector for musicians and producers. It provides clear harmonic information in your DAW, helping you identify chords, track scale changes, and use Nashville numbering in real-time.
+ChordLens is a minimalist MIDI chord and key detector plugin for producers, songwriters, and musicians. It listens to incoming MIDI, identifies the current chord, estimates the active key, and can show Nashville notation in real time.
 
 ![ChordLens](assets/ChordLensPromotion.png)
 
-## Main Features
+## Features
 
-- **Chord Detection:** Quickly identifies chords from basic triads to complex jazz voicings (e.g., `Am7(b5)`, `Cmaj9`, `Fsus4`).
-- **Scale Tracking:** Analyzes your performance history to suggest the most likely musical key. The engine is weighted towards recent notes for faster response to modulations, and it favors commonly known scales (Major/Minor) when multiple interpretations are possible.
-- **Nashville Numbering:** Toggle the **[N]** button to see the chord's degree within the current scale (e.g., `IV`, `vi`, `V/ii`).
-- **Visual Note Roles:** Notes are color-coded based on their role in the current scale—making root notes, scale steps, and chromatic "out-of-key" notes easy to spot.
-- **Minimalist UI:** A focused interface designed for legibility at a distance, perfect for live playing or monitoring while recording.
-
-## How it Works
-
-- **Octave Handling:** Recognizes the core harmonic structure whether you're playing simple voicings or wide, octave-doubled spans.
-- **Manual Key Lock:** You can manually set a root and scale mode (Major, Minor, Dorian, etc.) to override the auto-detection.
-- **Inversions:** Displays 1st, 2nd, and 3rd inversions when detected.
+- Real-time chord detection from simple triads to extended voicings
+- Auto key tracking with manual key/mode override
+- Nashville / Roman numeral display relative to the detected scale
+- Color-coded note display for quick harmonic context
+- Optional chord history view for progression tracking
+- VST3 and CLAP targets built from the same Rust codebase
 
 ## Installation
 
-ChordLens is a **VST3** and **CLAP** plugin, compatible with most modern DAWs like Bitwig Studio, Ableton Live, Reaper, and FL Studio.
+ChordLens is intended for modern DAWs that support MIDI-aware VST3 or CLAP plugins.
 
-1. Download the plugin build.
-2. Place the file in your VST3 or CLAP folder.
-3. Refresh your plugin list and add **ChordLens** to any MIDI track.
+1. Download a release archive for your platform.
+2. Install the `ChordLens.vst3` and/or `ChordLens.clap` artifact into your normal plugin location.
+3. Rescan plugins in your DAW.
+4. Insert ChordLens on a MIDI-capable track and feed it MIDI input.
 
-## AI Assistance Disclaimer
+## Usage
 
-This project was developed with AI assistance.
+- Leave the key on `Auto` to let ChordLens track tonal center from recent MIDI history.
+- Switch the root away from `Auto` to lock the display to a specific root and mode.
+- Toggle the history view to inspect the last stable chord changes.
+- Use Nashville mode when you want functional harmony instead of chord names alone.
 
-All architecture, implementation, and release decisions are reviewed by human maintainers.
-AI-assisted content may still contain errors, so please validate functionality, security, and license compatibility before production use.
+## Development
+
+Contributor-facing details live in [CONTRIBUTING.md](/C:/Development/chord-lens/CONTRIBUTING.md). Keep `README.md` and `CHANGELOG.md` user-focused.
+
+The short version:
+
+- Run `cargo test`, `cargo check`, and `cargo clippy --all-targets --all-features -- -D warnings` in your verify loop.
+- Put scratch files, local bundles, captures, and release snapshots under `./tmp/`.
+- Use [`AGENTS.md`](/C:/Development/chord-lens/AGENTS.md) for agent-specific guardrails.

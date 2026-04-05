@@ -7,13 +7,13 @@ cargo build --release
 if not exist "bin" mkdir "bin"
 
 echo Deploying VST3 and CLAP...
-echo Deploying VST3 and CLAP...
 copy "target\release\chord_lens.dll" "bin\ChordLens.vst3" /Y || echo Warning: bin\ChordLens.vst3 is busy, skipping deploy.
 copy "target\release\chord_lens.dll" "bin\ChordLens.clap" /Y || echo Warning: bin\ChordLens.clap is busy, skipping deploy.
 
 echo Build complete! Plugins are located in the bin/ directory.
 
 echo Creating timestamped release in tmp/...
+if not exist "tmp" mkdir "tmp"
 for /f "tokens=2-4 delims=/ " %%a in ('date /t') do (set mydate=%%c%%a%%b)
 set mytime=%time: =0%
 set mytime=%mytime::=%

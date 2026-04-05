@@ -35,39 +35,78 @@ mod editor;
 #[cfg(test)]
 mod tests;
 
-use chord::{ChordInfo, detect};
+use chord::{detect, ChordInfo};
 use editor::{EDITOR_HEIGHT, EDITOR_WIDTH};
 
 use nih_plug::prelude::*;
 use nih_plug_egui::EguiState;
 use parking_lot::RwLock;
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::collections::{HashSet, VecDeque};
 
 #[derive(Debug, PartialEq, Eq, Enum, Clone, Copy)]
 pub enum KeyRoot {
-    #[name = "Auto"] Auto,
-    #[name = "C"] C, #[name = "C#"] CSharp, #[name = "D"] D, #[name = "D#"] DSharp,
-    #[name = "E"] E, #[name = "F"] F, #[name = "F#"] FSharp, #[name = "G"] G,
-    #[name = "G#"] GSharp, #[name = "A"] A, #[name = "A#"] ASharp, #[name = "B"] B,
+    #[name = "Auto"]
+    Auto,
+    #[name = "C"]
+    C,
+    #[name = "C#"]
+    CSharp,
+    #[name = "D"]
+    D,
+    #[name = "D#"]
+    DSharp,
+    #[name = "E"]
+    E,
+    #[name = "F"]
+    F,
+    #[name = "F#"]
+    FSharp,
+    #[name = "G"]
+    G,
+    #[name = "G#"]
+    GSharp,
+    #[name = "A"]
+    A,
+    #[name = "A#"]
+    ASharp,
+    #[name = "B"]
+    B,
 }
 
 impl KeyRoot {
     pub fn as_str(&self) -> &'static str {
         match self {
-            KeyRoot::Auto => "Auto", KeyRoot::C => "C", KeyRoot::CSharp => "C#",
-            KeyRoot::D => "D", KeyRoot::DSharp => "D#", KeyRoot::E => "E",
-            KeyRoot::F => "F", KeyRoot::FSharp => "F#", KeyRoot::G => "G",
-            KeyRoot::GSharp => "G#", KeyRoot::A => "A", KeyRoot::ASharp => "A#",
+            KeyRoot::Auto => "Auto",
+            KeyRoot::C => "C",
+            KeyRoot::CSharp => "C#",
+            KeyRoot::D => "D",
+            KeyRoot::DSharp => "D#",
+            KeyRoot::E => "E",
+            KeyRoot::F => "F",
+            KeyRoot::FSharp => "F#",
+            KeyRoot::G => "G",
+            KeyRoot::GSharp => "G#",
+            KeyRoot::A => "A",
+            KeyRoot::ASharp => "A#",
             KeyRoot::B => "B",
         }
     }
     pub fn pc_val(&self) -> u8 {
         match self {
-            KeyRoot::Auto => 0, KeyRoot::C => 0, KeyRoot::CSharp => 1, KeyRoot::D => 2,
-            KeyRoot::DSharp => 3, KeyRoot::E => 4, KeyRoot::F => 5, KeyRoot::FSharp => 6,
-            KeyRoot::G => 7, KeyRoot::GSharp => 8, KeyRoot::A => 9, KeyRoot::ASharp => 10,
+            KeyRoot::Auto => 0,
+            KeyRoot::C => 0,
+            KeyRoot::CSharp => 1,
+            KeyRoot::D => 2,
+            KeyRoot::DSharp => 3,
+            KeyRoot::E => 4,
+            KeyRoot::F => 5,
+            KeyRoot::FSharp => 6,
+            KeyRoot::G => 7,
+            KeyRoot::GSharp => 8,
+            KeyRoot::A => 9,
+            KeyRoot::ASharp => 10,
             KeyRoot::B => 11,
         }
     }
@@ -75,13 +114,20 @@ impl KeyRoot {
 
 #[derive(Debug, PartialEq, Eq, Enum, Clone, Copy)]
 pub enum KeyMode {
-    #[name = "Major"] Major,
-    #[name = "Minor"] Minor,
-    #[name = "Dorian"] Dorian,
-    #[name = "Phrygian"] Phrygian,
-    #[name = "Lydian"] Lydian,
-    #[name = "Mixolydian"] Mixolydian,
-    #[name = "Locrian"] Locrian,
+    #[name = "Major"]
+    Major,
+    #[name = "Minor"]
+    Minor,
+    #[name = "Dorian"]
+    Dorian,
+    #[name = "Phrygian"]
+    Phrygian,
+    #[name = "Lydian"]
+    Lydian,
+    #[name = "Mixolydian"]
+    Mixolydian,
+    #[name = "Locrian"]
+    Locrian,
 }
 
 impl KeyMode {
@@ -98,9 +144,13 @@ impl KeyMode {
     }
     pub fn as_str(&self) -> &'static str {
         match self {
-            KeyMode::Major => "Major", KeyMode::Minor => "Minor", KeyMode::Dorian => "Dorian",
-            KeyMode::Phrygian => "Phrygian", KeyMode::Lydian => "Lydian",
-            KeyMode::Mixolydian => "Mixolydian", KeyMode::Locrian => "Locrian",
+            KeyMode::Major => "Major",
+            KeyMode::Minor => "Minor",
+            KeyMode::Dorian => "Dorian",
+            KeyMode::Phrygian => "Phrygian",
+            KeyMode::Lydian => "Lydian",
+            KeyMode::Mixolydian => "Mixolydian",
+            KeyMode::Locrian => "Locrian",
         }
     }
 }
@@ -199,12 +249,23 @@ impl Plugin for ChordLens {
     type SysExMessage = ();
     type BackgroundTask = ();
 
-    fn params(&self) -> Arc<dyn Params> { self.params.clone() }
+    fn params(&self) -> Arc<dyn Params> {
+        self.params.clone()
+    }
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        editor::create(self.params.clone(), self.chord_state.clone(), self.reset_history.clone())
+        editor::create(
+            self.params.clone(),
+            self.chord_state.clone(),
+            self.reset_history.clone(),
+        )
     }
 
-    fn process(&mut self, _buffer: &mut Buffer, _aux: &mut AuxiliaryBuffers, context: &mut impl ProcessContext<Self>) -> ProcessStatus {
+    fn process(
+        &mut self,
+        _buffer: &mut Buffer,
+        _aux: &mut AuxiliaryBuffers,
+        context: &mut impl ProcessContext<Self>,
+    ) -> ProcessStatus {
         let mut changed = false;
         while let Some(event) = context.next_event() {
             match event {
@@ -213,7 +274,9 @@ impl Plugin for ChordLens {
                         self.active_notes.insert(note);
                         changed = true;
                         self.history_midi.push_back(note);
-                        if self.history_midi.len() > 32 { self.history_midi.pop_front(); }
+                        if self.history_midi.len() > 32 {
+                            self.history_midi.pop_front();
+                        }
                     } else {
                         self.active_notes.remove(&note);
                         changed = true;
@@ -225,7 +288,9 @@ impl Plugin for ChordLens {
                     changed = true;
                     context.send_event(event);
                 }
-                other => { context.send_event(other); }
+                other => {
+                    context.send_event(other);
+                }
             }
         }
 
@@ -261,16 +326,24 @@ impl Plugin for ChordLens {
             let notes: Vec<u8> = self.active_notes.iter().copied().collect();
             let root_param = self.params.key_root.value();
             let mode_param = self.params.key_mode.value();
-            
+
             let (_, scale_root, scale_intervals) = if root_param == KeyRoot::Auto {
-                chord::detect_scale(&self.history_midi, notes.iter().copied().min(), &self.last_detected_key)
+                chord::detect_scale(
+                    &self.history_midi,
+                    notes.iter().copied().min(),
+                    &self.last_detected_key,
+                )
             } else {
                 (String::new(), root_param.pc_val(), mode_param.intervals())
             };
 
             let chord_info = detect(&notes, scale_root, self.params.allow_rootless.value());
             let key_text = if root_param == KeyRoot::Auto {
-                let (auto_key, _, _) = chord::detect_scale(&self.history_midi, notes.iter().copied().min(), &self.last_detected_key);
+                let (auto_key, _, _) = chord::detect_scale(
+                    &self.history_midi,
+                    notes.iter().copied().min(),
+                    &self.last_detected_key,
+                );
                 self.last_detected_key = auto_key.clone();
                 format!("Detected: {}", auto_key)
             } else {
@@ -286,14 +359,20 @@ impl Plugin for ChordLens {
             } else {
                 let threshold = (0.12 * sample_rate) as u32; // 120ms stability threshold
                 self.stable_samples += _buffer.samples() as u32;
-                if self.stable_samples >= threshold && self.current_stable_chord != self.last_pushed_chord && !self.current_stable_chord.is_empty() && self.current_stable_chord != "–" {
+                if self.stable_samples >= threshold
+                    && self.current_stable_chord != self.last_pushed_chord
+                    && !self.current_stable_chord.is_empty()
+                    && self.current_stable_chord != "–"
+                {
                     self.history_chords.push_back(ChordHistoryEntry {
                         root: chord_info.root.clone(),
                         quality: chord_info.quality.clone(),
                         omitted: chord_info.omitted.clone(),
                         slash: chord_info.slash.clone(),
                     });
-                    if self.history_chords.len() > 16 { self.history_chords.pop_front(); }
+                    if self.history_chords.len() > 16 {
+                        self.history_chords.pop_front();
+                    }
                     self.last_pushed_chord = self.current_stable_chord.clone();
                 }
             }
@@ -316,14 +395,20 @@ impl Plugin for ChordLens {
             } else {
                 let threshold = (0.12 * sample_rate) as u32; // 120ms
                 self.stable_samples += _buffer.samples() as u32;
-                if self.stable_samples >= threshold && self.current_stable_chord != self.last_pushed_chord && !self.current_stable_chord.is_empty() && self.current_stable_chord != "–" {
+                if self.stable_samples >= threshold
+                    && self.current_stable_chord != self.last_pushed_chord
+                    && !self.current_stable_chord.is_empty()
+                    && self.current_stable_chord != "–"
+                {
                     self.history_chords.push_back(ChordHistoryEntry {
                         root: cur_info.root.clone(),
                         quality: cur_info.quality.clone(),
                         omitted: cur_info.omitted.clone(),
                         slash: cur_info.slash.clone(),
                     });
-                    if self.history_chords.len() > 16 { self.history_chords.pop_front(); }
+                    if self.history_chords.len() > 16 {
+                        self.history_chords.pop_front();
+                    }
                     self.last_pushed_chord = self.current_stable_chord.clone();
                     let mut state = self.chord_state.write();
                     state.chord_history = self.history_chords.iter().cloned().collect();
@@ -337,15 +422,24 @@ impl Plugin for ChordLens {
 
 impl ClapPlugin for ChordLens {
     const CLAP_ID: &'static str = "io.github.chord-lens.chord-lens";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("Real-time MIDI chord detector with egui display");
+    const CLAP_DESCRIPTION: Option<&'static str> =
+        Some("Real-time MIDI chord detector with egui display");
     const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
-    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::NoteEffect, ClapFeature::Analyzer, ClapFeature::Utility];
+    const CLAP_FEATURES: &'static [ClapFeature] = &[
+        ClapFeature::NoteEffect,
+        ClapFeature::Analyzer,
+        ClapFeature::Utility,
+    ];
 }
 
 impl Vst3Plugin for ChordLens {
     const VST3_CLASS_ID: [u8; 16] = *b"ChordLens_000001";
-    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Fx, Vst3SubCategory::Tools, Vst3SubCategory::Analyzer];
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
+        Vst3SubCategory::Fx,
+        Vst3SubCategory::Tools,
+        Vst3SubCategory::Analyzer,
+    ];
 }
 
 nih_export_clap!(ChordLens);

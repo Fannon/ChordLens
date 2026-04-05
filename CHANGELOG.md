@@ -1,6 +1,7 @@
 # Changelog
 
 All notable changes to the **ChordLens** project will be documented in this file.
+This file is for user-visible changes. Contributor workflow belongs in `CONTRIBUTING.md`.
 
 ## [0.1.6] - 2026-04-04
 
