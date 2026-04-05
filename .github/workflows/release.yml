@@ -50,13 +50,10 @@ jobs:
         include:
           - os: windows-latest
             os-name: windows
-            target-path: target/release/chord_lens.dll
           - os: macos-latest
             os-name: macos
-            target-path: target/release/libchord_lens.dylib
           - os: ubuntu-latest
             os-name: linux
-            target-path: target/release/libchord_lens.so
 
     steps:
       - uses: actions/checkout@v4
@@ -72,23 +69,16 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build Release
-        run: cargo build --release
+      - name: Bundle Release Artifacts
+        run: cargo xtask bundle chord-lens --release
 
       - name: Prepare Artifacts
-        shell: bash
+        shell: pwsh
         run: |
-          mkdir -p dist/ChordLens
-          cp "${{ matrix.target-path }}" "dist/ChordLens/ChordLens.vst3"
-          cp "${{ matrix.target-path }}" "dist/ChordLens/ChordLens.clap"
-
-          if [ "${{ matrix.os-name }}" == "windows" ]; then
-            powershell Compress-Archive -Path dist/ChordLens -DestinationPath dist/ChordLens_Windows.zip
-          else
-            cd dist
-            zip -r "ChordLens_${{ matrix.os-name }}.zip" ChordLens
-            cd ..
-          fi
+          New-Item -ItemType Directory -Force -Path dist/ChordLens | Out-Null
+          Copy-Item -Recurse -Force "target/bundled/ChordLens.vst3" "dist/ChordLens/ChordLens.vst3"
+          Copy-Item -Recurse -Force "target/bundled/ChordLens.clap" "dist/ChordLens/ChordLens.clap"
+          Compress-Archive -Path dist/ChordLens -DestinationPath "dist/ChordLens_${{ matrix.os-name }}.zip" -Force
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4

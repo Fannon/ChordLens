@@ -6,6 +6,9 @@ authors = ["Simon Heimler"]
 license = "MIT"
 description = "A real-time MIDI chord detector plugin (VST3/CLAP)"
 
+[workspace]
+members = ["xtask"]
+
 [lib]
 # cdylib = the plugin shared library; lib = needed for the standalone binary target
 crate-type = ["cdylib", "lib"]

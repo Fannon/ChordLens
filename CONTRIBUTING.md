@@ -25,13 +25,14 @@ Put temporary notes, screenshots, local plugin copies, release snapshots, and ot
 
 - `cargo build`
 - `cargo build --release`
+- `cargo xtask bundle chord-lens --release`
 
 Helper scripts:
 
 - Windows: `build.bat`
 - Unix-like: `build.sh`
 
-Those scripts are convenience wrappers. They build the Rust library, copy convenience artifacts into `./bin/`, and write timestamped snapshots under `./tmp/`.
+Those scripts are convenience wrappers. They use NIH-plug's bundler, copy bundled artifacts into `./bin/`, and write timestamped snapshots under `./tmp/`.
 
 ### Rust / VST3 / CLAP facts for this repo
 
@@ -42,7 +43,9 @@ Those scripts are convenience wrappers. They build the Rust library, copy conven
   - Windows: `target/release/chord_lens.dll`
   - macOS: `target/release/libchord_lens.dylib`
   - Linux: `target/release/libchord_lens.so`
-- Host-facing VST3 / CLAP artifacts are packaging concerns on top of that shared library. Different hosts and platforms are stricter than simple file renaming, so final release artifacts should always be tested in a real host.
+- `cargo xtask bundle chord-lens --release` is the repo's correct packaging path. It writes bundled artifacts under `target/bundled/`.
+- `bundler.toml` controls the human-facing bundle name used by the NIH-plug bundler.
+- Host-facing VST3 / CLAP artifacts are packaging concerns on top of the shared library. Different hosts and platforms are stricter than simple file renaming, so final release artifacts should always be produced through the bundler and then tested in a real host.
 - This is a MIDI utility plugin, not an audio DSP processor. Real-time safety still matters because chord detection happens inside `process()`.
 
 ## Testing
@@ -64,7 +67,7 @@ Current repository flow:
 
 1. Review `README.md` and `CHANGELOG.md` for user-facing accuracy.
 2. Run the full verify loop.
-3. Build release artifacts.
+3. Build release artifacts with `cargo xtask bundle chord-lens --release`.
 4. Validate artifacts in a host if possible.
 5. Use the GitHub Actions workflow in [`.github/workflows/release.yml`](/C:/Development/chord-lens/.github/workflows/release.yml) or the requested manual process.
 6. Create tags, releases, commits, pushes, or merges only if that exact action was requested.

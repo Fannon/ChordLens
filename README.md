@@ -35,6 +35,7 @@ Contributor-facing details live in [CONTRIBUTING.md](/C:/Development/chord-lens/
 
 The short version:
 
+- Build distributable plugins with `cargo xtask bundle chord-lens --release`.
 - Run `cargo test`, `cargo check`, and `cargo clippy --all-targets --all-features -- -D warnings` in your verify loop.
 - Put scratch files, local bundles, captures, and release snapshots under `./tmp/`.
 - Use [`AGENTS.md`](/C:/Development/chord-lens/AGENTS.md) for agent-specific guardrails.

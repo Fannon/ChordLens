@@ -3,6 +3,11 @@
 All notable changes to the **ChordLens** project will be documented in this file.
 This file is for user-visible changes. Contributor workflow belongs in `CONTRIBUTING.md`.
 
+## [Unreleased]
+
+### Changed
+- **More Reliable Release Packaging:** Release artifacts now use NIH-plug's native bundling flow for VST3 and CLAP packaging instead of simple renamed library files.
+
 ## [0.1.6] - 2026-04-04
 
 ### Added
