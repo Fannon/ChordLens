@@ -257,9 +257,15 @@ pub(crate) struct KeyCandidate {
     estimate: KeyEstimate,
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ActiveNoteState {
+    instances: u32,
+    held_samples: u32,
+}
+
 #[derive(Default)]
 pub(crate) struct KeyHistory {
-    active_notes: HashMap<u8, u32>,
+    active_notes: HashMap<u8, ActiveNoteState>,
     recent_notes: VecDeque<u8>,
     note_evidence: [f32; 12],
     chords: VecDeque<ChordHistoryEntry>,
@@ -342,13 +348,25 @@ impl KeyHistory {
     }
 
     fn note_on(&mut self, note: u8) {
-        self.active_notes.insert(note, 0);
+        self.active_notes
+            .entry(note)
+            .and_modify(|state| state.instances = state.instances.saturating_add(1))
+            .or_insert(ActiveNoteState {
+                instances: 1,
+                held_samples: 0,
+            });
         Self::push_note(&mut self.recent_notes, note);
         self.note_evidence[(note % 12) as usize] += NOTE_ON_EVIDENCE_WEIGHT;
     }
 
     fn note_off(&mut self, note: u8) {
-        self.active_notes.remove(&note);
+        if let Some(state) = self.active_notes.get_mut(&note) {
+            if state.instances > 1 {
+                state.instances -= 1;
+            } else {
+                self.active_notes.remove(&note);
+            }
+        }
     }
 
     fn active_note_list(&self) -> Vec<u8> {
@@ -415,10 +433,10 @@ pub(crate) fn accumulate_held_note_history(
         return;
     }
 
-    for (&note, held_samples) in key_history.active_notes.iter_mut() {
-        let previous_steps = *held_samples / sustain_step_samples;
-        *held_samples = held_samples.saturating_add(buffer_samples);
-        let current_steps = *held_samples / sustain_step_samples;
+    for (&note, state) in key_history.active_notes.iter_mut() {
+        let previous_steps = state.held_samples / sustain_step_samples;
+        state.held_samples = state.held_samples.saturating_add(buffer_samples);
+        let current_steps = state.held_samples / sustain_step_samples;
         let new_steps = current_steps.saturating_sub(previous_steps).min(2);
 
         for _ in 0..new_steps {

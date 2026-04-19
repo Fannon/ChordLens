@@ -97,6 +97,16 @@ fn note_on(note: u8) -> NoteEvent<()> {
     }
 }
 
+fn note_off(note: u8) -> NoteEvent<()> {
+    NoteEvent::NoteOff {
+        timing: 0,
+        voice_id: None,
+        channel: 0,
+        note,
+        velocity: 0.0,
+    }
+}
+
 fn process_until_settled(
     plugin: &mut ChordLens,
     leading_events: Vec<NoteEvent<()>>,
@@ -400,6 +410,17 @@ fn test_key_history_clear_resets_notes_evidence_and_chords() {
         .note_evidence()
         .iter()
         .all(|&value| value == 0.0));
+}
+
+#[test]
+fn test_duplicate_note_off_keeps_pitch_active_until_last_release() {
+    let mut key_history = KeyHistory::default();
+    key_history.note_on(60);
+    key_history.note_on(60);
+
+    key_history.note_off(60);
+
+    assert_eq!(key_history.active_note_list(), vec![60]);
 }
 
 #[test]
@@ -897,4 +918,25 @@ fn test_process_path_reset_history_clears_runtime_state() {
     assert!(plugin.displayed_key_state.key.is_none());
     assert!(plugin.pending_display_key_state.key.is_none());
     assert!(state.chord_history.is_empty());
+}
+
+#[test]
+fn test_process_path_keeps_duplicate_note_active_after_single_release() {
+    let mut plugin = ChordLens::default();
+
+    process_until_settled(
+        &mut plugin,
+        vec![
+            note_on(60),
+            note_on(60),
+            note_on(64),
+            note_on(67),
+            note_off(60),
+        ],
+        3,
+    );
+
+    let state = plugin.chord_state.read().clone();
+    assert_eq!(state.chord_info.root, "C");
+    assert_eq!(state.chord_info.quality, "");
 }

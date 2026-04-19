@@ -3,6 +3,14 @@
 All notable changes to the **ChordLens** project will be documented in this file.
 This file is for user-visible changes. Contributor workflow belongs in `CONTRIBUTING.md`.
 
+## [Unreleased]
+
+### Fixed
+- **Overlapping MIDI Note Lifetime:** Duplicate `NoteOn` events for the same pitch now stay active until the last matching `NoteOff`, preventing stacked or retriggered notes from dropping out of chord detection too early.
+
+### Added
+- **Regression Coverage for Layered Notes:** Added runtime and process-path tests that verify duplicate note lifetimes survive a single release and keep the detected chord stable.
+
 ## [0.1.8] - 2026-04-05
 
 ### Added
