@@ -287,7 +287,7 @@ fn draw_ui(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
                                             ui.label(
-                                                egui::RichText::new(inv)
+                                                egui::RichText::new(*inv)
                                                     .color(Color32::from_rgb(100, 100, 110))
                                                     .font(FontId::new(
                                                         14.0,
@@ -312,17 +312,13 @@ fn draw_ui(
                 |ui| {
                     ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                         ui.add_space(15.0);
-                        let root_name = &snapshot.chord_info.root;
-                        let root_pc = if root_name.is_empty() || root_name == "–" {
-                            None
-                        } else {
-                            crate::chord::parse_pitch_class_prefix(root_name, snapshot.scale_root)
-                        };
+                        let root_name = snapshot.chord_info.root_label(snapshot.scale_root);
+                        let root_pc = snapshot.chord_info.root_pc;
                         let root_color = if let Some(p) = root_pc {
                             get_note_color(
                                 p,
                                 snapshot.scale_root,
-                                &snapshot.scale_intervals,
+                                snapshot.scale_intervals.as_slice(),
                                 snapshot.chromatic_mode,
                                 &crate::chord::NoteRole::Root,
                             )
@@ -363,7 +359,7 @@ fn draw_ui(
                         }
                         if !snapshot.chord_info.quality.is_empty() {
                             job.append(
-                                &snapshot.chord_info.quality,
+                                snapshot.chord_info.quality,
                                 0.0,
                                 egui::text::TextFormat {
                                     font_id: FontId::new(64.0, FontFamily::Proportional),
@@ -375,7 +371,7 @@ fn draw_ui(
                         }
                         if !snapshot.chord_info.omitted.is_empty() {
                             job.append(
-                                &snapshot.chord_info.omitted,
+                                snapshot.chord_info.omitted,
                                 4.0,
                                 egui::text::TextFormat {
                                     font_id: FontId::new(32.0, FontFamily::Proportional),
@@ -385,9 +381,10 @@ fn draw_ui(
                                 },
                             );
                         }
-                        if !snapshot.chord_info.slash.is_empty() {
+                        let slash = snapshot.chord_info.slash_label(snapshot.scale_root);
+                        if !slash.is_empty() {
                             job.append(
-                                &snapshot.chord_info.slash,
+                                &slash,
                                 2.0,
                                 egui::text::TextFormat {
                                     font_id: FontId::new(72.0, FontFamily::Proportional),
@@ -422,10 +419,7 @@ fn draw_ui(
                                 let hist_len = history.len();
                                 let start_idx = hist_len.saturating_sub(6);
                                 for (i, entry) in history.iter().enumerate().skip(start_idx) {
-                                    let root_pc = crate::chord::parse_pitch_class_prefix(
-                                        &entry.root,
-                                        snapshot.scale_root,
-                                    );
+                                    let root_pc = entry.root_pc;
                                     let display_pos = i - start_idx;
                                     let total_visible = hist_len - start_idx;
                                     let opacity = if i == hist_len - 1 {
@@ -438,7 +432,7 @@ fn draw_ui(
                                         get_note_color(
                                             p,
                                             snapshot.scale_root,
-                                            &snapshot.scale_intervals,
+                                            snapshot.scale_intervals.as_slice(),
                                             snapshot.chromatic_mode,
                                             &crate::chord::NoteRole::Root,
                                         )
@@ -462,7 +456,17 @@ fn draw_ui(
                                         );
                                     }
                                     hist_job.append(
-                                        &format!("{}{}", entry.root, entry.quality),
+                                        &format!(
+                                            "{}{}",
+                                            entry
+                                                .root_pc
+                                                .map(|pc| crate::chord::pc_name(
+                                                    pc,
+                                                    snapshot.scale_root
+                                                ))
+                                                .unwrap_or(""),
+                                            entry.quality
+                                        ),
                                         0.0,
                                         egui::text::TextFormat {
                                             font_id: FontId::new(20.0, FontFamily::Proportional),
@@ -472,7 +476,7 @@ fn draw_ui(
                                     );
                                     if !entry.omitted.is_empty() {
                                         hist_job.append(
-                                            &entry.omitted,
+                                            entry.omitted,
                                             2.0,
                                             egui::text::TextFormat {
                                                 font_id: FontId::new(
@@ -485,9 +489,10 @@ fn draw_ui(
                                             },
                                         );
                                     }
-                                    if !entry.slash.is_empty() {
+                                    let slash = entry.slash_label(snapshot.scale_root);
+                                    if !slash.is_empty() {
                                         hist_job.append(
-                                            &entry.slash,
+                                            &slash,
                                             0.0,
                                             egui::text::TextFormat {
                                                 font_id: FontId::new(
@@ -514,27 +519,22 @@ fn draw_ui(
                     } else {
                         ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                             ui.add_space(8.0);
-                            let notes = &snapshot.chord_info.active_notes;
+                            let notes = &snapshot.chord_info.active_midi;
                             if !notes.is_empty() {
                                 let mut note_job = egui::text::LayoutJob {
                                     halign: egui::Align::Center,
                                     ..Default::default()
                                 };
-                                for (i, (name, role)) in notes.iter().enumerate() {
-                                    let color = crate::chord::parse_pitch_class_prefix(
-                                        name,
+                                for (i, note) in notes.iter().enumerate() {
+                                    let name =
+                                        crate::chord::midi_to_name(note.midi, snapshot.scale_root);
+                                    let color = get_note_color(
+                                        note.midi % 12,
                                         snapshot.scale_root,
-                                    )
-                                    .map(|pc| {
-                                        get_note_color(
-                                            pc,
-                                            snapshot.scale_root,
-                                            &snapshot.scale_intervals,
-                                            snapshot.chromatic_mode,
-                                            role,
-                                        )
-                                    })
-                                    .unwrap_or(NOTE_TEXT);
+                                        snapshot.scale_intervals.as_slice(),
+                                        snapshot.chromatic_mode,
+                                        &note.role,
+                                    );
                                     let (note_part, octave_part) = if let Some(first_digit) =
                                         name.find(|c: char| c.is_ascii_digit() || c == '-')
                                     {

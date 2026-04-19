@@ -1,6 +1,6 @@
 # ChordLens
 
-ChordLens is a minimalist MIDI chord and key detector plugin for producers, songwriters, and musicians. It listens to incoming MIDI, identifies the current chord, estimates the active key, and can show Nashville notation in real time.
+ChordLens is a minimalist MIDI chord and key detector plugin for producers, songwriters, and musicians. It listens to incoming MIDI, identifies the current chord, estimates the active key, and can show Roman numeral scale degrees in real time.
 
 ![ChordLens](assets/ChordLensPromotion.png)
 
@@ -8,7 +8,7 @@ ChordLens is a minimalist MIDI chord and key detector plugin for producers, song
 
 - Real-time chord detection from simple triads to extended voicings
 - Auto key tracking with manual key/mode override
-- Nashville / Roman numeral display relative to the detected scale
+- Roman numeral display relative to the detected scale
 - Color-coded note display for quick harmonic context
 - Optional chord history view for progression tracking
 - VST3 and CLAP targets built from the same Rust codebase
@@ -27,7 +27,7 @@ ChordLens is intended for modern DAWs that support MIDI-aware VST3 or CLAP plugi
 - Leave the key on `Auto` to let ChordLens track tonal center from recent MIDI history.
 - Switch the root away from `Auto` to lock the display to a specific root and mode.
 - Toggle the history view to inspect the last stable chord changes.
-- Use Nashville mode when you want functional harmony instead of chord names alone.
+- Use the `Roman Numerals`, `Root-less Voicings`, and `Key Tracking` parameters from your DAW when you want alternate harmonic heuristics or notation. The built-in editor currently exposes root, mode, reset, and history controls only.
 
 ## Development
 

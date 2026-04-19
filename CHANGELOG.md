@@ -7,11 +7,17 @@ This file is for user-visible changes. Contributor workflow belongs in `CONTRIBU
 
 ### Fixed
 - **Overlapping MIDI Note Lifetime:** Duplicate `NoteOn` events for the same pitch now stay active until the last matching `NoteOff`, preventing stacked or retriggered notes from dropping out of chord detection too early.
-- **Flat-Key Note Coloring:** The editor now parses displayed note labels with a shared longest-prefix matcher, so `Bb`, `Eb`, and `Ab` keep the correct scale-aware coloring in the main chord display, chord history, and active-note list.
+- **Held-Note Key Refresh:** Auto key tracking now re-evaluates while notes are sustained or evidence is still decaying, so confidence and displayed keys can continue updating without waiting for the next MIDI event.
+- **Reduced Audio-Thread Heap Pressure:** Runtime note tracking now uses fixed note counters and compact chord/history snapshots, and note/chord label formatting moved to the GUI side instead of rebuilding per-note strings on the audio thread.
+- **Key-Aware Note Coloring:** The GUI now colors chord roots, history, and active notes from stored pitch classes, keeping `Bb`, `Eb`, and `Ab` correct in flat contexts without reparsing display labels.
+- **Pinned Build Inputs:** `nih_plug` and `nih_plug_egui` are now pinned to the validated revision used by this repo instead of floating on a moving git head.
+- **Terminology and Workflow Docs:** User docs now consistently describe the scale overlay as Roman numerals, document which controls are host-only, and clarify the current workflow around hidden parameters and plugin state.
 
 ### Added
 - **Regression Coverage for Layered Notes:** Added runtime and process-path tests that verify duplicate note lifetimes survive a single release and keep the detected chord stable.
-- **Regression Coverage for Enharmonic UI Labels:** Added parser tests that lock down flat and sharp label handling, including octave and suffix forms such as `Eb3` and `Abmaj7`.
+- **Regression Coverage for Sustained Key Updates:** Added process-path coverage that proves auto key state can refresh without new MIDI events.
+- **Editor and Persistence Smoke Tests:** Added lightweight tests for editor construction and persisted editor-state recall.
+- **Regression Coverage for Enharmonic Labels:** Added parser tests that lock down flat and sharp label handling, including octave and suffix forms such as `Eb3` and `Abmaj7`.
 
 ## [0.1.8] - 2026-04-05
 
@@ -54,7 +60,7 @@ This file is for user-visible changes. Contributor workflow belongs in `CONTRIBU
 ### Added
 - **Extended Jazz Palette:** Support for 11th, 13th, and Altered Dominant chords (e.g., `7b9`, `7#9`, `7#11`, `9#11`, `9b13`).
 - **Key-Aware Enharmonic Naming:** Intelligent flat/sharp selection based on the detected musical key (e.g., Bb in F Major).
-- **Configurable Accumulation:** Added an **Acc: [ms]** control (0ms–100ms) to the UI to stabilize detection during live performance.
+- **Short-Lived Accumulation Experiment:** Version `0.1.5` briefly exposed an **Acc: [ms]** control (0ms–100ms); current builds no longer include that UI control.
 - **Experimental Root-less Detection:** Optional toggle ("RL") to enable heuristic root inference (e.g., identifying G13 from F, A, B, E).
 - **Comprehensive Test Suite:** Decoupled unit tests into a dedicated `tests.rs` with extensive coverage for musical edge cases.
 

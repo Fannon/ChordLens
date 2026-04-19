@@ -1,18 +1,21 @@
 use crate::accumulate_held_note_history;
 use crate::detect;
+use crate::editor;
 use crate::key_detection::{detect_key, DetectedKey, ScaleMode};
 use crate::update_displayed_key;
 use crate::ChordHistoryEntry;
 use crate::ChordLens;
+use crate::ChordLensParams;
 use crate::KeyCandidate;
 use crate::KeyDisplayState;
 use crate::KeyHistory;
 use crate::KeyResponsiveness;
 use nih_plug::context::process::{ProcessContext, Transport};
 use nih_plug::context::PluginApi;
-use nih_plug::prelude::{AuxiliaryBuffers, Buffer, NoteEvent, Plugin, ProcessStatus};
+use nih_plug::prelude::{AuxiliaryBuffers, Buffer, NoteEvent, Params, Plugin, ProcessStatus};
 use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 const TEST_SAMPLE_RATE: f32 = 48_000.0;
 const TEST_BUFFER_SAMPLES: usize = 512;
@@ -120,10 +123,43 @@ fn process_until_settled(
 
 fn chord_str(notes: &[u8], scale_root: u8) -> String {
     let info = detect(notes, scale_root, false);
-    format!(
-        "{}{}{}{}",
-        info.root, info.quality, info.omitted, info.slash
-    )
+    info.display_name(scale_root)
+}
+
+fn chord_root(info: crate::chord::ChordInfo, scale_root: u8) -> String {
+    info.root_label(scale_root)
+}
+
+fn chord_slash(info: crate::chord::ChordInfo, scale_root: u8) -> String {
+    info.slash_label(scale_root)
+}
+
+fn chord_degree(info: crate::chord::ChordInfo, scale_root: u8) -> String {
+    info.degree_text(scale_root)
+}
+
+fn parse_history_root(root: &str) -> Option<u8> {
+    [
+        ("C#", 1),
+        ("Db", 1),
+        ("D#", 3),
+        ("Eb", 3),
+        ("F#", 6),
+        ("Gb", 6),
+        ("G#", 8),
+        ("Ab", 8),
+        ("A#", 10),
+        ("Bb", 10),
+        ("C", 0),
+        ("D", 2),
+        ("E", 4),
+        ("F", 5),
+        ("G", 7),
+        ("A", 9),
+        ("B", 11),
+    ]
+    .into_iter()
+    .find_map(|(name, pc)| root.starts_with(name).then_some(pc))
 }
 
 fn detect_key_with_responsiveness(
@@ -177,12 +213,18 @@ fn make_chord_history(entries: &[(&str, &str)]) -> VecDeque<ChordHistoryEntry> {
     entries
         .iter()
         .map(|(root, quality)| ChordHistoryEntry {
-            root: (*root).to_string(),
-            quality: (*quality).to_string(),
-            omitted: String::new(),
-            slash: String::new(),
+            root_pc: parse_history_root(root),
+            quality: Box::leak((*quality).to_string().into_boxed_str()),
+            omitted: "",
+            bass_pc: parse_history_root(root),
         })
         .collect()
+}
+
+fn active_notes_from_history(key_history: &KeyHistory) -> Vec<u8> {
+    let mut notes = [0u8; 128];
+    let len = key_history.fill_active_note_list(&mut notes);
+    notes[..len].to_vec()
 }
 
 #[test]
@@ -226,12 +268,12 @@ fn test_enharmonic_naming() {
     // F Major key (scale_root = 5)
     // 70 (Bb) should be Bb, not A#
     let info = detect(&[70, 74, 77], 5, false); // Bb Major triad
-    assert_eq!(info.root, "Bb");
+    assert_eq!(chord_root(info, 5), "Bb");
 
     // G Major key (scale_root = 7)
     // 66 (F#) should be F#, not Gb
     let info = detect(&[66, 70, 73], 7, false); // F# Major triad
-    assert_eq!(info.root, "F#");
+    assert_eq!(chord_root(info, 7), "F#");
 }
 
 #[test]
@@ -248,13 +290,15 @@ fn test_note_label_parser_matches_detect_output_in_flat_keys() {
     let info = detect(&[70, 74, 77], 5, false);
 
     assert_eq!(
-        crate::chord::parse_pitch_class_prefix(&info.root, 5),
+        crate::chord::parse_pitch_class_prefix(&chord_root(info, 5), 5),
         Some(10)
     );
     assert_eq!(
-        info.active_notes
+        info.active_midi
             .iter()
-            .map(|(name, _)| crate::chord::parse_pitch_class_prefix(name, 5))
+            .map(|note| {
+                crate::chord::parse_pitch_class_prefix(&crate::chord::midi_to_name(note.midi, 5), 5)
+            })
             .collect::<Vec<_>>(),
         vec![Some(10), Some(2), Some(5)]
     );
@@ -264,19 +308,19 @@ fn test_note_label_parser_matches_detect_output_in_flat_keys() {
 fn test_nashville_roman_numerals() {
     // I in C Major
     let info = detect(&[60, 64, 67], 0, false);
-    assert_eq!(info.degree, "I");
+    assert_eq!(chord_degree(info, 0), "I");
 
     // ii in C Major (Dm)
     let info = detect(&[62, 65, 69], 0, false);
-    assert_eq!(info.degree, "ii");
+    assert_eq!(chord_degree(info, 0), "ii");
 
     // V7 in C Major (G7)
     let info = detect(&[55, 59, 62, 65], 0, false);
-    assert_eq!(info.degree, "V"); // Our degree logic doesn't include the 7 suffix yet
+    assert_eq!(chord_degree(info, 0), "V"); // Our degree logic doesn't include the 7 suffix yet
 
     // IV in F Major (Bb)
     let info = detect(&[70, 74, 77], 5, false);
-    assert_eq!(info.degree, "IV");
+    assert_eq!(chord_degree(info, 5), "IV");
 }
 
 #[test]
@@ -286,11 +330,11 @@ fn test_rootless_heuristic() {
     // Notes: 65, 69, 71, 76 (F4, A4, B4, E5)
     // Without rootless: probably won't find G
     let info_no_rl = detect(&[65, 69, 71, 76], 0, false);
-    assert_ne!(info_no_rl.root, "G");
+    assert_ne!(chord_root(info_no_rl, 0), "G");
 
     // With rootless and G is the dominant of C major (scale_root=0)
     let info_rl = detect(&[65, 69, 71, 76], 0, true);
-    assert_eq!(info_rl.root, "G");
+    assert_eq!(chord_root(info_rl, 0), "G");
     assert_eq!(info_rl.quality, "13");
 }
 
@@ -298,14 +342,14 @@ fn test_rootless_heuristic() {
 fn test_inversions_and_slashes() {
     // C/G (2nd inversion if G is lowest)
     let info = detect(&[55, 60, 64], 0, false); // G3, C4, E4
-    assert_eq!(info.root, "C");
-    assert_eq!(info.slash, "/G");
+    assert_eq!(chord_root(info, 0), "C");
+    assert_eq!(chord_slash(info, 0), "/G");
     assert_eq!(info.inversion, "2nd inv.");
 
     // C/E (1st inversion)
     let info = detect(&[52, 60, 67], 0, false); // E3, C4, G4
-    assert_eq!(info.root, "C");
-    assert_eq!(info.slash, "/E");
+    assert_eq!(chord_root(info, 0), "C");
+    assert_eq!(chord_slash(info, 0), "/E");
     assert_eq!(info.inversion, "1st inv.");
 }
 
@@ -422,10 +466,10 @@ fn test_key_history_clear_resets_notes_evidence_and_chords() {
     let mut key_history = KeyHistory::default();
     key_history.note_on(60);
     key_history.push_chord(ChordHistoryEntry {
-        root: "C".to_string(),
-        quality: String::new(),
-        omitted: String::new(),
-        slash: String::new(),
+        root_pc: Some(0),
+        quality: "",
+        omitted: "",
+        bass_pc: Some(0),
     });
 
     key_history.clear();
@@ -446,7 +490,7 @@ fn test_duplicate_note_off_keeps_pitch_active_until_last_release() {
 
     key_history.note_off(60);
 
-    assert_eq!(key_history.active_note_list(), vec![60]);
+    assert_eq!(active_notes_from_history(&key_history), vec![60]);
 }
 
 #[test]
@@ -896,7 +940,7 @@ fn test_process_path_detects_chord_and_updates_state() {
     process_until_settled(&mut plugin, vec![note_on(60), note_on(64), note_on(67)], 3);
 
     let state = plugin.chord_state.read().clone();
-    assert_eq!(state.chord_info.root, "C");
+    assert_eq!(chord_root(state.chord_info, state.scale_root), "C");
     assert_eq!(state.chord_info.quality, "");
     assert_eq!(state.nashville_text, "I");
     assert!(!state.chromatic_mode);
@@ -917,7 +961,7 @@ fn test_process_path_chromatic_mode_keeps_chord_detection_and_disables_nashville
 
     let state = plugin.chord_state.read().clone();
     assert_eq!(state.key_text, "User: Chromatic");
-    assert_eq!(state.chord_info.root, "C");
+    assert_eq!(chord_root(state.chord_info, state.scale_root), "C");
     assert_eq!(state.chord_info.quality, "");
     assert_eq!(state.nashville_text, "");
     assert!(state.chromatic_mode);
@@ -937,7 +981,7 @@ fn test_process_path_reset_history_clears_runtime_state() {
     run_process(&mut plugin, Vec::new());
 
     let state = plugin.chord_state.read().clone();
-    assert!(plugin.key_history.active_note_list().is_empty());
+    assert!(active_notes_from_history(&plugin.key_history).is_empty());
     assert!(plugin.key_history.note_history().is_empty());
     assert!(plugin.key_history.chord_history().is_empty());
     assert!(plugin.internal_detected_key.is_none());
@@ -963,6 +1007,74 @@ fn test_process_path_keeps_duplicate_note_active_after_single_release() {
     );
 
     let state = plugin.chord_state.read().clone();
-    assert_eq!(state.chord_info.root, "C");
+    assert_eq!(chord_root(state.chord_info, state.scale_root), "C");
     assert_eq!(state.chord_info.quality, "");
+}
+
+#[test]
+fn test_process_path_auto_key_refresh_updates_key_state_without_new_events() {
+    let mut plugin = ChordLens {
+        displayed_key_state: KeyDisplayState {
+            key: Some(DetectedKey {
+                root: 2,
+                mode: ScaleMode::Major,
+            }),
+            confidence: 80,
+        },
+        internal_detected_key: Some(DetectedKey {
+            root: 2,
+            mode: ScaleMode::Major,
+        }),
+        ..ChordLens::default()
+    };
+    plugin.key_history.note_evidence = [0.0; 12];
+    for note in [62u8, 66, 69, 74, 62, 66, 69, 74] {
+        plugin.key_history.recent_notes.push_back(note);
+    }
+    for pc in [1usize, 2, 6, 9] {
+        plugin.key_history.note_evidence[pc] = 40.0;
+    }
+    plugin.key_history.active_notes[62].instances = 1;
+    plugin.key_history.active_notes[66].instances = 1;
+    plugin.key_history.active_notes[69].instances = 1;
+    plugin.chord_state.write().key_confidence = 0;
+
+    for _ in 0..4 {
+        run_process(&mut plugin, Vec::new());
+    }
+
+    let state = plugin.chord_state.read().clone();
+    assert_eq!(state.key_text, "Detected: D Major");
+    assert!(state.key_confidence > 0);
+}
+
+#[test]
+fn test_editor_state_round_trips_through_persisted_fields() {
+    let params = ChordLensParams::default();
+    let mut serialized = params.serialize_fields();
+    let persist_key = serialized
+        .keys()
+        .find(|key| key.contains("editor-state"))
+        .cloned()
+        .expect("expected persisted editor state");
+    let resized_value = serialized[&persist_key]
+        .replace("480", "512")
+        .replace("300", "320");
+    serialized.insert(persist_key, resized_value);
+
+    let restored = ChordLensParams::default();
+    restored.deserialize_fields(&serialized);
+
+    assert_eq!(restored.editor_state.size(), (512, 320));
+}
+
+#[test]
+fn test_editor_create_smoke() {
+    let params = Arc::new(ChordLensParams::default());
+    let chord_state = Arc::new(parking_lot::RwLock::new(crate::ChordState::default()));
+    let reset_history = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    let editor = editor::create(params, chord_state, reset_history);
+
+    assert!(editor.is_some());
 }

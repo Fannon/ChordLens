@@ -14,14 +14,13 @@ members = ["xtask"]
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
-# Core nih-plug framework – pulled directly from git so we always get the latest
-# stable API.  Pin to a specific rev in production.
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = [
+# Core NIH-plug framework pinned to the revision validated by this repo.
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "28b149ec4d62757d0b448809148a0c3ca6e09a95", features = [
     "standalone",
 ] }
 
-# egui GUI integration shipped alongside nih-plug
-nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+# egui GUI integration shipped alongside the same pinned NIH-plug revision
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "28b149ec4d62757d0b448809148a0c3ca6e09a95" }
 serde = { version = "1.0", features = ["derive"] }
 
 # Atomic f32 – used for nothing yet but left here for future metering widgets

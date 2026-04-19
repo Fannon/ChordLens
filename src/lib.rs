@@ -19,14 +19,15 @@
 //!
 //! The **only** shared mutable data is `Arc<RwLock<ChordState>>`.
 //! The audio thread *writes* once per buffer (low-frequency); the GUI thread
-//! *reads* once per frame (~60 Hz).  `parking_lot::RwLock` does not allocate
-//! on the uncontended fast path, making this safe from a real-time perspective
-//! for a **MIDI-only** plugin (no audio DSP computed here).
+//! *reads* once per frame (~60 Hz). `parking_lot::RwLock` does not allocate on
+//! the uncontended fast path, but any state formatting still done inside
+//! `process()` must be kept minimal because this is a MIDI effect running on a
+//! host callback.
 //!
 //! ## Chord detection
 //!
 //! See `chord.rs` for the interval-math details.  The short story:
-//!  - Active MIDI note numbers are stored in a `HashSet<u8>`.
+//!  - Active MIDI note counts are stored in a fixed `[ActiveNoteState; 128]`.
 //!  - On every note event, `chord::detect()` rebuilds the `ChordInfo`.
 //!  - The new `ChordInfo` is written to `ChordState` under the write-lock.
 
@@ -43,15 +44,17 @@ use key_detection::{detect_key, DetectedKey, KeyEstimate, ScaleMode};
 use nih_plug::prelude::*;
 use nih_plug_egui::EguiState;
 use parking_lot::RwLock;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 const KEY_HISTORY_LIMIT: usize = 24;
+const CHORD_HISTORY_LIMIT: usize = 16;
 const HELD_NOTE_HISTORY_STEP_SECS: f32 = 0.080;
 const KEY_EVIDENCE_HALFLIFE_SECS: f32 = 1.25;
 const NOTE_ON_EVIDENCE_WEIGHT: f32 = 8.0;
 const HELD_NOTE_EVIDENCE_WEIGHT: f32 = 3.0;
+const AUTO_KEY_REFRESH_SECS: f32 = 0.040;
 
 #[derive(Debug, PartialEq, Eq, Enum, Clone, Copy)]
 pub enum KeyRoot {
@@ -143,15 +146,15 @@ pub enum KeyMode {
 }
 
 impl KeyMode {
-    pub fn intervals(&self) -> Vec<i32> {
+    pub fn intervals(&self) -> &'static [i32] {
         match self {
-            KeyMode::Major => vec![0, 2, 4, 5, 7, 9, 11],
-            KeyMode::Minor => vec![0, 2, 3, 5, 7, 8, 10],
-            KeyMode::Dorian => vec![0, 2, 3, 5, 7, 9, 10],
-            KeyMode::Phrygian => vec![0, 1, 3, 5, 7, 8, 10],
-            KeyMode::Lydian => vec![0, 2, 4, 6, 7, 9, 11],
-            KeyMode::Mixolydian => vec![0, 2, 4, 5, 7, 9, 10],
-            KeyMode::Locrian => vec![0, 1, 3, 5, 6, 8, 10],
+            KeyMode::Major => &[0, 2, 4, 5, 7, 9, 11],
+            KeyMode::Minor => &[0, 2, 3, 5, 7, 8, 10],
+            KeyMode::Dorian => &[0, 2, 3, 5, 7, 9, 10],
+            KeyMode::Phrygian => &[0, 1, 3, 5, 7, 8, 10],
+            KeyMode::Lydian => &[0, 2, 4, 6, 7, 9, 11],
+            KeyMode::Mixolydian => &[0, 2, 4, 5, 7, 9, 10],
+            KeyMode::Locrian => &[0, 1, 3, 5, 6, 8, 10],
         }
     }
     pub fn as_str(&self) -> &'static str {
@@ -224,12 +227,94 @@ impl KeyResponsiveness {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ChordHistoryEntry {
-    pub root: String,
-    pub quality: String,
-    pub omitted: String,
-    pub slash: String,
+    pub root_pc: Option<u8>,
+    pub quality: &'static str,
+    pub omitted: &'static str,
+    pub bass_pc: Option<u8>,
+}
+
+impl ChordHistoryEntry {
+    pub fn slash_label(&self, scale_root: u8) -> String {
+        match (self.root_pc, self.bass_pc) {
+            (Some(root_pc), Some(bass_pc)) if bass_pc != root_pc => {
+                format!("/{}", chord::pc_name(bass_pc, scale_root))
+            }
+            _ => String::new(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScaleIntervals {
+    values: [i32; 7],
+    len: u8,
+}
+
+impl ScaleIntervals {
+    fn from_slice(intervals: &[i32]) -> Self {
+        let mut values = [0; 7];
+        let len = intervals.len().min(values.len());
+        values[..len].copy_from_slice(&intervals[..len]);
+        Self {
+            values,
+            len: len as u8,
+        }
+    }
+
+    pub fn as_slice(&self) -> &[i32] {
+        &self.values[..self.len as usize]
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ChordHistorySnapshot {
+    entries: [ChordHistoryEntry; CHORD_HISTORY_LIMIT],
+    len: u8,
+}
+
+impl ChordHistorySnapshot {
+    fn push(&mut self, entry: ChordHistoryEntry) {
+        let idx = self.len as usize;
+        self.entries[idx] = entry;
+        self.len += 1;
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &ChordHistoryEntry> {
+        self.entries[..self.len as usize].iter()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct StableChordIdentity {
+    root_pc: Option<u8>,
+    quality: &'static str,
+    omitted: &'static str,
+    bass_pc: Option<u8>,
+}
+
+impl From<ChordInfo> for StableChordIdentity {
+    fn from(value: ChordInfo) -> Self {
+        Self {
+            root_pc: value.root_pc,
+            quality: value.quality,
+            omitted: value.omitted,
+            bass_pc: value.bass_pc,
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -237,11 +322,11 @@ pub struct ChordState {
     pub chord_info: ChordInfo,
     pub key_text: String,
     pub scale_root: u8,
-    pub scale_intervals: Vec<i32>,
+    pub scale_intervals: ScaleIntervals,
     pub chromatic_mode: bool,
     pub key_confidence: u8,
     pub nashville_text: String,
-    pub chord_history: Vec<ChordHistoryEntry>,
+    pub chord_history: ChordHistorySnapshot,
     #[cfg(debug_assertions)]
     pub debug_key_diagnostics: String,
 }
@@ -259,16 +344,26 @@ pub(crate) struct KeyCandidate {
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct ActiveNoteState {
-    instances: u32,
+    instances: u16,
     held_samples: u32,
 }
 
-#[derive(Default)]
 pub(crate) struct KeyHistory {
-    active_notes: HashMap<u8, ActiveNoteState>,
+    active_notes: [ActiveNoteState; 128],
     recent_notes: VecDeque<u8>,
     note_evidence: [f32; 12],
     chords: VecDeque<ChordHistoryEntry>,
+}
+
+impl Default for KeyHistory {
+    fn default() -> Self {
+        Self {
+            active_notes: [ActiveNoteState::default(); 128],
+            recent_notes: VecDeque::with_capacity(KEY_HISTORY_LIMIT),
+            note_evidence: [0.0; 12],
+            chords: VecDeque::with_capacity(CHORD_HISTORY_LIMIT),
+        }
+    }
 }
 
 pub struct ChordLens {
@@ -280,9 +375,10 @@ pub struct ChordLens {
     pending_display_key_state: KeyDisplayState,
     pending_display_samples: u32,
     debounce_samples_remaining: u32,
+    key_refresh_samples_remaining: u32,
     notes_changed: bool,
-    last_pushed_chord: String,
-    current_stable_chord: String,
+    last_pushed_chord: StableChordIdentity,
+    current_stable_chord: StableChordIdentity,
     stable_samples: u32,
     pub reset_history: Arc<AtomicBool>,
 }
@@ -312,7 +408,7 @@ impl Default for ChordLensParams {
             key_root: EnumParam::new("Force Root", KeyRoot::Auto),
             key_mode: EnumParam::new("Force Mode", KeyMode::Major),
             key_responsiveness: EnumParam::new("Key Tracking", KeyResponsiveness::Balanced),
-            show_nashville: BoolParam::new("Nashville Numbers", true),
+            show_nashville: BoolParam::new("Roman Numerals", true),
             allow_rootless: BoolParam::new("Root-less Voicings", false),
             show_history: BoolParam::new("Chord History", false),
         }
@@ -330,9 +426,10 @@ impl Default for ChordLens {
             pending_display_key_state: KeyDisplayState::default(),
             pending_display_samples: 0,
             debounce_samples_remaining: 0,
+            key_refresh_samples_remaining: 0,
             notes_changed: false,
-            last_pushed_chord: String::new(),
-            current_stable_chord: String::new(),
+            last_pushed_chord: StableChordIdentity::default(),
+            current_stable_chord: StableChordIdentity::default(),
             stable_samples: 0,
             reset_history: Arc::new(AtomicBool::new(false)),
         }
@@ -348,33 +445,48 @@ impl KeyHistory {
     }
 
     fn note_on(&mut self, note: u8) {
-        self.active_notes
-            .entry(note)
-            .and_modify(|state| state.instances = state.instances.saturating_add(1))
-            .or_insert(ActiveNoteState {
-                instances: 1,
-                held_samples: 0,
-            });
+        let state = &mut self.active_notes[note as usize];
+        state.instances = state.instances.saturating_add(1);
+        if state.instances == 1 {
+            state.held_samples = 0;
+        }
         Self::push_note(&mut self.recent_notes, note);
         self.note_evidence[(note % 12) as usize] += NOTE_ON_EVIDENCE_WEIGHT;
     }
 
     fn note_off(&mut self, note: u8) {
-        if let Some(state) = self.active_notes.get_mut(&note) {
-            if state.instances > 1 {
-                state.instances -= 1;
-            } else {
-                self.active_notes.remove(&note);
-            }
+        let state = &mut self.active_notes[note as usize];
+        if state.instances > 1 {
+            state.instances -= 1;
+        } else {
+            *state = ActiveNoteState::default();
         }
     }
 
-    fn active_note_list(&self) -> Vec<u8> {
-        self.active_notes.keys().copied().collect()
+    fn fill_active_note_list(&self, notes: &mut [u8; 128]) -> usize {
+        let mut len = 0;
+        for (note, state) in self.active_notes.iter().enumerate() {
+            if state.instances > 0 {
+                notes[len] = note as u8;
+                len += 1;
+            }
+        }
+        len
     }
 
     fn lowest_note(&self) -> Option<u8> {
-        self.active_notes.keys().copied().min()
+        self.active_notes
+            .iter()
+            .position(|state| state.instances > 0)
+            .map(|note| note as u8)
+    }
+
+    fn has_active_notes(&self) -> bool {
+        self.active_notes.iter().any(|state| state.instances > 0)
+    }
+
+    fn has_evidence(&self) -> bool {
+        self.note_evidence.iter().any(|&value| value > 0.0)
     }
 
     fn note_history(&self) -> &VecDeque<u8> {
@@ -389,19 +501,23 @@ impl KeyHistory {
         &self.chords
     }
 
-    fn chord_history_vec(&self) -> Vec<ChordHistoryEntry> {
-        self.chords.iter().cloned().collect()
+    fn chord_history_snapshot(&self) -> ChordHistorySnapshot {
+        let mut snapshot = ChordHistorySnapshot::default();
+        for &entry in &self.chords {
+            snapshot.push(entry);
+        }
+        snapshot
     }
 
     fn push_chord(&mut self, entry: ChordHistoryEntry) {
         self.chords.push_back(entry);
-        if self.chords.len() > 16 {
+        if self.chords.len() > CHORD_HISTORY_LIMIT {
             self.chords.pop_front();
         }
     }
 
     fn clear(&mut self) {
-        self.active_notes.clear();
+        self.active_notes = [ActiveNoteState::default(); 128];
         self.recent_notes.clear();
         self.note_evidence = [0.0; 12];
         self.chords.clear();
@@ -433,15 +549,18 @@ pub(crate) fn accumulate_held_note_history(
         return;
     }
 
-    for (&note, state) in key_history.active_notes.iter_mut() {
+    for (note, state) in key_history.active_notes.iter_mut().enumerate() {
+        if state.instances == 0 {
+            continue;
+        }
         let previous_steps = state.held_samples / sustain_step_samples;
         state.held_samples = state.held_samples.saturating_add(buffer_samples);
         let current_steps = state.held_samples / sustain_step_samples;
         let new_steps = current_steps.saturating_sub(previous_steps).min(2);
 
         for _ in 0..new_steps {
-            KeyHistory::push_note(&mut key_history.recent_notes, note);
-            key_history.note_evidence[(note % 12) as usize] += HELD_NOTE_EVIDENCE_WEIGHT;
+            KeyHistory::push_note(&mut key_history.recent_notes, note as u8);
+            key_history.note_evidence[note % 12] += HELD_NOTE_EVIDENCE_WEIGHT;
         }
     }
 }
@@ -456,6 +575,9 @@ pub(crate) fn update_displayed_key(
     switch_secs: f32,
 ) {
     let Some(internal_key) = internal.estimate.key else {
+        *displayed = KeyDisplayState::default();
+        *pending = KeyDisplayState::default();
+        *pending_samples = 0;
         return;
     };
 
@@ -488,6 +610,60 @@ pub(crate) fn update_displayed_key(
         *displayed = pending.clone();
         *pending = KeyDisplayState::default();
         *pending_samples = 0;
+    }
+}
+
+fn resolve_display_state(
+    plugin: &mut ChordLens,
+    root_param: KeyRoot,
+    mode_param: KeyMode,
+    responsiveness: KeyResponsiveness,
+    key_estimate: &KeyEstimate,
+    buffer_samples: u32,
+    sample_rate: f32,
+) -> (u8, ScaleIntervals, String, u8, bool) {
+    if root_param == KeyRoot::Auto {
+        plugin.internal_detected_key = key_estimate.key;
+        update_displayed_key(
+            &mut plugin.displayed_key_state,
+            &mut plugin.pending_display_key_state,
+            &mut plugin.pending_display_samples,
+            KeyCandidate {
+                estimate: key_estimate.clone(),
+            },
+            buffer_samples,
+            sample_rate,
+            responsiveness.display_switch_secs(),
+        );
+        let displayed_key = plugin.displayed_key_state.key;
+        (
+            displayed_key.map_or(0, |key| key.root),
+            ScaleIntervals::from_slice(
+                displayed_key.map(|key| key.intervals()).unwrap_or_default(),
+            ),
+            displayed_key
+                .map(|key| format!("Detected: {}", key.display_name()))
+                .unwrap_or_else(|| "Detected: Unknown".to_string()),
+            plugin.displayed_key_state.confidence,
+            false,
+        )
+    } else if root_param == KeyRoot::Chromatic {
+        (
+            0,
+            ScaleIntervals::default(),
+            "User: Chromatic".to_string(),
+            key_estimate.confidence,
+            true,
+        )
+    } else {
+        let forced_key = key_estimate.key.expect("forced key must exist");
+        (
+            forced_key.root,
+            ScaleIntervals::from_slice(forced_key.intervals()),
+            format!("User: {} {}", root_param.as_str(), mode_param.as_str()),
+            key_estimate.confidence,
+            false,
+        )
     }
 }
 
@@ -546,7 +722,8 @@ impl Plugin for ChordLens {
         }
 
         let sample_rate = context.transport().sample_rate;
-        accumulate_held_note_history(&mut self.key_history, _buffer.samples() as u32, sample_rate);
+        let buffer_samples = _buffer.samples() as u32;
+        accumulate_held_note_history(&mut self.key_history, buffer_samples, sample_rate);
         let debounce_threshold = (0.025 * sample_rate) as u32; // Fixed 25ms internal debounce
 
         if changed {
@@ -555,33 +732,53 @@ impl Plugin for ChordLens {
         }
 
         let mut run_detection = false;
+        let mut key_only_refresh = false;
         if self.notes_changed {
-            if self.debounce_samples_remaining <= _buffer.samples() as u32 {
+            if self.debounce_samples_remaining <= buffer_samples {
                 self.debounce_samples_remaining = 0;
                 self.notes_changed = false;
                 run_detection = true;
             } else {
-                self.debounce_samples_remaining -= _buffer.samples() as u32;
+                self.debounce_samples_remaining -= buffer_samples;
             }
         }
 
         if self.reset_history.swap(false, Ordering::Relaxed) {
             self.key_history.clear();
-            self.last_pushed_chord.clear();
-            self.current_stable_chord.clear();
+            self.last_pushed_chord = StableChordIdentity::default();
+            self.current_stable_chord = StableChordIdentity::default();
             self.internal_detected_key = None;
             self.displayed_key_state = KeyDisplayState::default();
             self.pending_display_key_state = KeyDisplayState::default();
             self.pending_display_samples = 0;
+            self.key_refresh_samples_remaining = 0;
             run_detection = true;
         }
 
-        if run_detection {
-            let notes = self.key_history.active_note_list();
-            let root_param = self.params.key_root.value();
-            let mode_param = self.params.key_mode.value();
-            let responsiveness = self.params.key_responsiveness.value();
+        let root_param = self.params.key_root.value();
+        let mode_param = self.params.key_mode.value();
+        let responsiveness = self.params.key_responsiveness.value();
+        let refresh_threshold = (AUTO_KEY_REFRESH_SECS * sample_rate) as u32;
 
+        if !run_detection
+            && root_param == KeyRoot::Auto
+            && (self.key_history.has_active_notes()
+                || self.key_history.has_evidence()
+                || self.pending_display_key_state.key.is_some())
+        {
+            if self.key_refresh_samples_remaining <= buffer_samples {
+                self.key_refresh_samples_remaining = refresh_threshold;
+                key_only_refresh = true;
+            } else {
+                self.key_refresh_samples_remaining -= buffer_samples;
+            }
+        } else if run_detection {
+            self.key_refresh_samples_remaining = refresh_threshold;
+        } else {
+            self.key_refresh_samples_remaining = 0;
+        }
+
+        if run_detection || key_only_refresh {
             let key_estimate = if root_param == KeyRoot::Auto {
                 detect_key(
                     self.key_history.note_evidence(),
@@ -616,81 +813,52 @@ impl Plugin for ChordLens {
                 key_text,
                 key_confidence,
                 chromatic_mode,
-            ) = if root_param == KeyRoot::Auto {
-                self.internal_detected_key = key_estimate.key;
-                update_displayed_key(
-                    &mut self.displayed_key_state,
-                    &mut self.pending_display_key_state,
-                    &mut self.pending_display_samples,
-                    KeyCandidate {
-                        estimate: key_estimate.clone(),
-                    },
-                    _buffer.samples() as u32,
-                    sample_rate,
-                    responsiveness.display_switch_secs(),
-                );
-                let displayed_key = self.displayed_key_state.key;
-                (
-                    displayed_key.map_or(0, |key| key.root),
-                    displayed_key
-                        .map(|key| key.intervals().to_vec())
-                        .unwrap_or_default(),
-                    displayed_key
-                        .map(|key| format!("Detected: {}", key.display_name()))
-                        .unwrap_or_else(|| "Detected: Unknown".to_string()),
-                    self.displayed_key_state.confidence,
-                    false,
-                )
-            } else if root_param == KeyRoot::Chromatic {
-                (
-                    0,
-                    vec![],
-                    "User: Chromatic".to_string(),
-                    key_estimate.confidence,
-                    true,
+            ) = resolve_display_state(
+                self,
+                root_param,
+                mode_param,
+                responsiveness,
+                &key_estimate,
+                buffer_samples,
+                sample_rate,
+            );
+
+            let chord_info = if run_detection {
+                let mut notes = [0u8; 128];
+                let note_count = self.key_history.fill_active_note_list(&mut notes);
+                detect(
+                    &notes[..note_count],
+                    display_scale_root,
+                    self.params.allow_rootless.value(),
                 )
             } else {
-                let forced_key = key_estimate.key.expect("forced key must exist");
-                (
-                    forced_key.root,
-                    forced_key.intervals().to_vec(),
-                    format!("User: {} {}", root_param.as_str(), mode_param.as_str()),
-                    key_estimate.confidence,
-                    false,
-                )
+                self.chord_state.read().chord_info
             };
-
-            let chord_info = detect(
-                &notes,
-                display_scale_root,
-                self.params.allow_rootless.value(),
-            );
 
             let nashville_text = if chromatic_mode {
                 String::new()
             } else {
-                chord_info.degree.clone()
+                chord_info.degree_text(display_scale_root)
             };
-            let current_full_name = format!("{}", chord_info);
+            let current_chord = StableChordIdentity::from(chord_info);
 
-            if current_full_name != self.current_stable_chord {
-                self.current_stable_chord = current_full_name;
+            if current_chord != self.current_stable_chord {
+                self.current_stable_chord = current_chord;
                 self.stable_samples = 0;
             } else {
                 let threshold = (0.12 * sample_rate) as u32; // 120ms stability threshold
-                self.stable_samples += _buffer.samples() as u32;
+                self.stable_samples += buffer_samples;
                 if self.stable_samples >= threshold
                     && self.current_stable_chord != self.last_pushed_chord
-                    && !self.current_stable_chord.is_empty()
-                    && self.current_stable_chord != "–"
+                    && self.current_stable_chord.root_pc.is_some()
                 {
                     self.key_history.push_chord(ChordHistoryEntry {
-                        root: chord_info.root.clone(),
-                        quality: chord_info.quality.clone(),
-                        omitted: chord_info.omitted.clone(),
-                        slash: chord_info.slash.clone(),
+                        root_pc: chord_info.root_pc,
+                        quality: chord_info.quality,
+                        omitted: chord_info.omitted,
+                        bass_pc: chord_info.bass_pc,
                     });
-                    self.last_pushed_chord = self.current_stable_chord.clone();
+                    self.last_pushed_chord = self.current_stable_chord;
                 }
             }
 
@@ -702,7 +870,7 @@ impl Plugin for ChordLens {
                 chromatic_mode,
                 key_confidence,
                 nashville_text,
-                chord_history: self.key_history.chord_history_vec(),
+                chord_history: self.key_history.chord_history_snapshot(),
                 #[cfg(debug_assertions)]
                 debug_key_diagnostics: if cfg!(debug_assertions)
                     && std::env::var_os("CHORDLENS_DEBUG_KEYS").is_some()
@@ -713,29 +881,28 @@ impl Plugin for ChordLens {
                 },
             };
         } else {
-            // Even if we didn't run full detection, update stability for history tracking
-            let cur_info = self.chord_state.read().chord_info.clone();
-            let name = format!("{}", cur_info);
-            if name != self.current_stable_chord {
-                self.current_stable_chord = name;
+            // Even if we didn't recompute chord detection, update stability for history tracking.
+            let cur_info = self.chord_state.read().chord_info;
+            let current_chord = StableChordIdentity::from(cur_info);
+            if current_chord != self.current_stable_chord {
+                self.current_stable_chord = current_chord;
                 self.stable_samples = 0;
             } else {
                 let threshold = (0.12 * sample_rate) as u32; // 120ms
-                self.stable_samples += _buffer.samples() as u32;
+                self.stable_samples += buffer_samples;
                 if self.stable_samples >= threshold
                     && self.current_stable_chord != self.last_pushed_chord
-                    && !self.current_stable_chord.is_empty()
-                    && self.current_stable_chord != "–"
+                    && self.current_stable_chord.root_pc.is_some()
                 {
                     self.key_history.push_chord(ChordHistoryEntry {
-                        root: cur_info.root.clone(),
-                        quality: cur_info.quality.clone(),
-                        omitted: cur_info.omitted.clone(),
-                        slash: cur_info.slash.clone(),
+                        root_pc: cur_info.root_pc,
+                        quality: cur_info.quality,
+                        omitted: cur_info.omitted,
+                        bass_pc: cur_info.bass_pc,
                     });
-                    self.last_pushed_chord = self.current_stable_chord.clone();
+                    self.last_pushed_chord = self.current_stable_chord;
                     let mut state = self.chord_state.write();
-                    state.chord_history = self.key_history.chord_history_vec();
+                    state.chord_history = self.key_history.chord_history_snapshot();
                 }
             }
         }
