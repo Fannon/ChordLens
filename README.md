@@ -17,7 +17,7 @@ ChordLens is a minimalist MIDI chord and key detector plugin for producers, song
 
 ChordLens is intended for modern DAWs that support MIDI-aware VST3 or CLAP plugins.
 
-1. Download a release archive for your platform.
+1. Download a [release for your platform](https://github.com/Fannon/ChordLens/releases).
 2. Install the `ChordLens.vst3` and/or `ChordLens.clap` artifact into your normal plugin location.
 3. Rescan plugins in your DAW.
 4. Insert ChordLens on a MIDI-capable track and feed it MIDI input.
