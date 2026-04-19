@@ -5,6 +5,15 @@ This file is for user-visible changes. Contributor workflow belongs in `CONTRIBU
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-19
+
+### Added
+- **Broader Omitted-Fifth Jazz Detection:** Chord recognition now identifies omitted-fifth major-7, 9, 11, 13, and altered-extension voicings such as `maj7(no5)`, `11(no5)`, `13(no5)`, `9#11(no5)`, `7b9(no5)`, and `7#11(no5)`.
+- **Suspended Dominant Voicings:** Added direct detection for `7sus4` and `9sus4` shapes commonly used in pop, gospel, and jazz.
+
+### Changed
+- **More Practical Sparse Chord Labels:** Added support for high-value omitted-fifth `add9`, `madd9`, `maj9`, and `m9` voicings, improving recognition of common minimal keyboard and MIDI input shapes.
+
 ## [0.2.0] - 2026-04-19
 
 ### Fixed

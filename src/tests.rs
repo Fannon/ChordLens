@@ -251,6 +251,36 @@ fn test_ninth_chords() {
 }
 
 #[test]
+fn test_omitted_fifth_extensions() {
+    assert_eq!(chord_str(&[60, 62, 64], 0), "Cadd9(no5)");
+    assert_eq!(chord_str(&[60, 62, 63], 0), "Cmadd9(no5)");
+    assert_eq!(chord_str(&[60, 64, 71, 74], 0), "Cmaj9(no5)");
+    assert_eq!(chord_str(&[60, 63, 70, 74], 0), "Cm9(no5)");
+}
+
+#[test]
+fn test_omitted_fifth_jazz_families() {
+    assert_eq!(chord_str(&[60, 64, 71], 0), "Cmaj7(no5)");
+    assert_eq!(chord_str(&[48, 52, 58, 62, 65], 0), "C11(no5)");
+    assert_eq!(chord_str(&[48, 51, 58, 62, 65], 0), "Cm11(no5)");
+    assert_eq!(chord_str(&[48, 52, 58, 62, 65, 69], 0), "C13(no5)");
+    assert_eq!(chord_str(&[48, 51, 58, 62, 65, 69], 0), "Cm13(no5)");
+    assert_eq!(chord_str(&[48, 52, 59, 62, 65, 69], 0), "Cmaj13(no5)");
+    assert_eq!(chord_str(&[60, 64, 71, 74, 78], 0), "Cmaj7#11(no5)");
+    assert_eq!(chord_str(&[48, 52, 58, 62, 66], 0), "C9#11(no5)");
+    assert_eq!(chord_str(&[48, 52, 58, 62, 68], 0), "C9b13(no5)");
+    assert_eq!(chord_str(&[60, 64, 70, 73], 0), "C7b9(no5)");
+    assert_eq!(chord_str(&[60, 64, 70, 75], 0), "C7#9(no5)");
+    assert_eq!(chord_str(&[60, 64, 70, 78], 0), "C7#11(no5)");
+}
+
+#[test]
+fn test_suspended_dominants() {
+    assert_eq!(chord_str(&[60, 65, 67, 70], 0), "C7sus4");
+    assert_eq!(chord_str(&[48, 53, 55, 58, 62], 0), "C9sus4");
+}
+
+#[test]
 fn test_extended_jazz_chords() {
     // C11
     assert_eq!(chord_str(&[48, 52, 55, 58, 62, 65], 0), "C11");

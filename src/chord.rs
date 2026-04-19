@@ -193,12 +193,24 @@ static TEMPLATES: &[ChordTemplate] = &[
         quality: "13",
     },
     ChordTemplate {
+        intervals: &[4, 10, 14, 17, 21],
+        quality: "13(no5)",
+    },
+    ChordTemplate {
         intervals: &[3, 7, 10, 14, 17, 21],
         quality: "m13",
     },
     ChordTemplate {
+        intervals: &[3, 10, 14, 17, 21],
+        quality: "m13(no5)",
+    },
+    ChordTemplate {
         intervals: &[4, 7, 11, 14, 17, 21],
         quality: "maj13",
+    },
+    ChordTemplate {
+        intervals: &[4, 11, 14, 17, 21],
+        quality: "maj13(no5)",
     },
     // ── 11th chords ──────────────────────────────────────────────────────────
     ChordTemplate {
@@ -206,8 +218,16 @@ static TEMPLATES: &[ChordTemplate] = &[
         quality: "11",
     },
     ChordTemplate {
+        intervals: &[4, 10, 14, 17],
+        quality: "11(no5)",
+    },
+    ChordTemplate {
         intervals: &[3, 7, 10, 14, 17],
         quality: "m11",
+    },
+    ChordTemplate {
+        intervals: &[3, 10, 14, 17],
+        quality: "m11(no5)",
     },
     ChordTemplate {
         intervals: &[3, 6, 10, 14, 17],
@@ -218,13 +238,25 @@ static TEMPLATES: &[ChordTemplate] = &[
         quality: "maj7#11",
     },
     ChordTemplate {
+        intervals: &[4, 11, 14, 18],
+        quality: "maj7#11(no5)",
+    },
+    ChordTemplate {
         intervals: &[4, 7, 10, 14, 18],
         quality: "9#11",
+    },
+    ChordTemplate {
+        intervals: &[4, 10, 14, 18],
+        quality: "9#11(no5)",
     },
     // ── 9th chords ───────────────────────────────────────────────────────────
     ChordTemplate {
         intervals: &[4, 7, 10, 14, 20],
         quality: "9b13",
+    },
+    ChordTemplate {
+        intervals: &[4, 10, 14, 20],
+        quality: "9b13(no5)",
     },
     ChordTemplate {
         intervals: &[4, 7, 9, 14],
@@ -235,6 +267,10 @@ static TEMPLATES: &[ChordTemplate] = &[
         quality: "m6/9",
     },
     ChordTemplate {
+        intervals: &[5, 7, 10, 14],
+        quality: "9sus4",
+    },
+    ChordTemplate {
         intervals: &[4, 7, 10, 14],
         quality: "9",
     },
@@ -243,21 +279,45 @@ static TEMPLATES: &[ChordTemplate] = &[
         quality: "m9",
     },
     ChordTemplate {
+        intervals: &[3, 10, 14],
+        quality: "m9(no5)",
+    },
+    ChordTemplate {
         intervals: &[4, 7, 11, 14],
         quality: "maj9",
+    },
+    ChordTemplate {
+        intervals: &[4, 11, 14],
+        quality: "maj9(no5)",
     },
     ChordTemplate {
         intervals: &[4, 7, 10, 13],
         quality: "7b9",
     },
     ChordTemplate {
+        intervals: &[4, 10, 13],
+        quality: "7b9(no5)",
+    },
+    ChordTemplate {
         intervals: &[4, 7, 10, 15],
         quality: "7#9",
+    },
+    ChordTemplate {
+        intervals: &[4, 10, 15],
+        quality: "7#9(no5)",
     },
     // ── 7th chords ───────────────────────────────────────────────────────────
     ChordTemplate {
         intervals: &[4, 7, 10, 18],
         quality: "7#11",
+    },
+    ChordTemplate {
+        intervals: &[4, 10, 18],
+        quality: "7#11(no5)",
+    },
+    ChordTemplate {
+        intervals: &[5, 7, 10],
+        quality: "7sus4",
     },
     ChordTemplate {
         intervals: &[4, 7, 10],
@@ -266,6 +326,10 @@ static TEMPLATES: &[ChordTemplate] = &[
     ChordTemplate {
         intervals: &[4, 7, 11],
         quality: "maj7",
+    },
+    ChordTemplate {
+        intervals: &[4, 11],
+        quality: "maj7(no5)",
     },
     ChordTemplate {
         intervals: &[3, 7, 10],
@@ -318,8 +382,16 @@ static TEMPLATES: &[ChordTemplate] = &[
         quality: "madd9",
     },
     ChordTemplate {
+        intervals: &[3, 14],
+        quality: "madd9(no5)",
+    },
+    ChordTemplate {
         intervals: &[4, 7, 14],
         quality: "add9",
+    },
+    ChordTemplate {
+        intervals: &[4, 14],
+        quality: "add9(no5)",
     },
     // ── Basic triads ─────────────────────────────────────────────────────────
     ChordTemplate {
