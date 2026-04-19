@@ -316,15 +316,7 @@ fn draw_ui(
                         let root_pc = if root_name.is_empty() || root_name == "–" {
                             None
                         } else {
-                            let mut found = None;
-                            for p in 0..12 {
-                                if root_name
-                                    .starts_with(crate::chord::pc_name(p, snapshot.scale_root))
-                                {
-                                    found = Some(p);
-                                }
-                            }
-                            found
+                            crate::chord::parse_pitch_class_prefix(root_name, snapshot.scale_root)
                         };
                         let root_color = if let Some(p) = root_pc {
                             get_note_color(
@@ -430,16 +422,10 @@ fn draw_ui(
                                 let hist_len = history.len();
                                 let start_idx = hist_len.saturating_sub(6);
                                 for (i, entry) in history.iter().enumerate().skip(start_idx) {
-                                    let mut root_pc = None;
-                                    for p in 0..12 {
-                                        if entry.root.starts_with(crate::chord::pc_name(
-                                            p,
-                                            snapshot.scale_root,
-                                        )) {
-                                            root_pc = Some(p);
-                                            break;
-                                        }
-                                    }
+                                    let root_pc = crate::chord::parse_pitch_class_prefix(
+                                        &entry.root,
+                                        snapshot.scale_root,
+                                    );
                                     let display_pos = i - start_idx;
                                     let total_visible = hist_len - start_idx;
                                     let opacity = if i == hist_len - 1 {
@@ -535,22 +521,20 @@ fn draw_ui(
                                     ..Default::default()
                                 };
                                 for (i, (name, role)) in notes.iter().enumerate() {
-                                    let mut pc = 0;
-                                    for p in 0..12 {
-                                        if name.starts_with(crate::chord::pc_name(
-                                            p,
-                                            snapshot.scale_root,
-                                        )) {
-                                            pc = p;
-                                        }
-                                    }
-                                    let color = get_note_color(
-                                        pc,
+                                    let color = crate::chord::parse_pitch_class_prefix(
+                                        name,
                                         snapshot.scale_root,
-                                        &snapshot.scale_intervals,
-                                        snapshot.chromatic_mode,
-                                        role,
-                                    );
+                                    )
+                                    .map(|pc| {
+                                        get_note_color(
+                                            pc,
+                                            snapshot.scale_root,
+                                            &snapshot.scale_intervals,
+                                            snapshot.chromatic_mode,
+                                            role,
+                                        )
+                                    })
+                                    .unwrap_or(NOTE_TEXT);
                                     let (note_part, octave_part) = if let Some(first_digit) =
                                         name.find(|c: char| c.is_ascii_digit() || c == '-')
                                     {

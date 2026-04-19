@@ -235,6 +235,32 @@ fn test_enharmonic_naming() {
 }
 
 #[test]
+fn test_note_label_parser_prefers_longest_prefix_for_flats_and_sharps() {
+    assert_eq!(crate::chord::parse_pitch_class_prefix("Bb", 5), Some(10));
+    assert_eq!(crate::chord::parse_pitch_class_prefix("Eb3", 5), Some(3));
+    assert_eq!(crate::chord::parse_pitch_class_prefix("Abmaj7", 5), Some(8));
+    assert_eq!(crate::chord::parse_pitch_class_prefix("C#4", 0), Some(1));
+    assert_eq!(crate::chord::parse_pitch_class_prefix("–", 5), None);
+}
+
+#[test]
+fn test_note_label_parser_matches_detect_output_in_flat_keys() {
+    let info = detect(&[70, 74, 77], 5, false);
+
+    assert_eq!(
+        crate::chord::parse_pitch_class_prefix(&info.root, 5),
+        Some(10)
+    );
+    assert_eq!(
+        info.active_notes
+            .iter()
+            .map(|(name, _)| crate::chord::parse_pitch_class_prefix(name, 5))
+            .collect::<Vec<_>>(),
+        vec![Some(10), Some(2), Some(5)]
+    );
+}
+
+#[test]
 fn test_nashville_roman_numerals() {
     // I in C Major
     let info = detect(&[60, 64, 67], 0, false);

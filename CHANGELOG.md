@@ -7,9 +7,11 @@ This file is for user-visible changes. Contributor workflow belongs in `CONTRIBU
 
 ### Fixed
 - **Overlapping MIDI Note Lifetime:** Duplicate `NoteOn` events for the same pitch now stay active until the last matching `NoteOff`, preventing stacked or retriggered notes from dropping out of chord detection too early.
+- **Flat-Key Note Coloring:** The editor now parses displayed note labels with a shared longest-prefix matcher, so `Bb`, `Eb`, and `Ab` keep the correct scale-aware coloring in the main chord display, chord history, and active-note list.
 
 ### Added
 - **Regression Coverage for Layered Notes:** Added runtime and process-path tests that verify duplicate note lifetimes survive a single release and keep the detected chord stable.
+- **Regression Coverage for Enharmonic UI Labels:** Added parser tests that lock down flat and sharp label handling, including octave and suffix forms such as `Eb3` and `Abmaj7`.
 
 ## [0.1.8] - 2026-04-05
 

@@ -65,6 +65,21 @@ pub fn pc_name(pc: u8, scale_root: u8) -> &'static str {
     get_note_names(scale_root)[(pc % 12) as usize]
 }
 
+pub(crate) fn parse_pitch_class_prefix(label: &str, scale_root: u8) -> Option<u8> {
+    let mut best_match = None;
+    let mut best_len = 0;
+
+    for pc in 0..12 {
+        let note_name = pc_name(pc, scale_root);
+        if label.starts_with(note_name) && note_name.len() > best_len {
+            best_match = Some(pc);
+            best_len = note_name.len();
+        }
+    }
+
+    best_match
+}
+
 struct ChordTemplate {
     /// Semitone intervals above the root (root=0 is implicit, not listed).
     intervals: &'static [u8],
