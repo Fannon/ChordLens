@@ -357,7 +357,7 @@ fn score_candidates(
             ));
         }
     }
-    scored.sort_by(|a, b| b.total_score.cmp(&a.total_score));
+    scored.sort_by_key(|candidate| std::cmp::Reverse(candidate.total_score));
     scored
 }
 
