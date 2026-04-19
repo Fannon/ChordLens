@@ -74,13 +74,32 @@ jobs:
 
       - name: Install pluginval
         if: matrix.os == 'windows-latest'
-        shell: cmd
-        run: choco install pluginval -y --no-progress
+        shell: pwsh
+        run: |
+          choco install pluginval -y --no-progress
+
+          $pluginval = @(
+            (Get-Command pluginval.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1),
+            "C:\ProgramData\chocolatey\bin\pluginval.exe",
+            "C:\ProgramData\chocolatey\lib\pluginval\tools\pluginval.exe"
+          ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+
+          if (-not $pluginval) {
+            throw "pluginval.exe was not found after Chocolatey install"
+          }
+
+          Split-Path -Parent $pluginval | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "PLUGINVAL_EXE=$pluginval" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Validate VST3 with pluginval
         if: matrix.os == 'windows-latest'
-        shell: cmd
-        run: pluginval --validate-in-process --strictness-level 5 --output-dir pluginval-logs --validate target\bundled\ChordLens.vst3
+        shell: pwsh
+        run: |
+          & "$env:PLUGINVAL_EXE" `
+            --validate-in-process `
+            --strictness-level 5 `
+            --output-dir pluginval-logs `
+            --validate target\bundled\ChordLens.vst3
 
       - name: Prepare Artifacts
         shell: pwsh
