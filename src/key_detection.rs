@@ -125,24 +125,6 @@ struct CandidateScore {
     miss_weight: i32,
 }
 
-fn parse_note_name(name: &str) -> Option<u8> {
-    match name {
-        "C" => Some(0),
-        "C#" | "Db" => Some(1),
-        "D" => Some(2),
-        "D#" | "Eb" => Some(3),
-        "E" => Some(4),
-        "F" => Some(5),
-        "F#" | "Gb" => Some(6),
-        "G" => Some(7),
-        "G#" | "Ab" => Some(8),
-        "A" => Some(9),
-        "A#" | "Bb" => Some(10),
-        "B" => Some(11),
-        _ => None,
-    }
-}
-
 fn is_minor_quality(quality: &str) -> bool {
     (quality.starts_with('m') && !quality.starts_with("maj"))
         || quality.contains('ø')
@@ -195,7 +177,7 @@ fn score_chord_history(key: DetectedKey, chord_history: &VecDeque<ChordHistoryEn
     let mut score = 0;
     let recent: Vec<_> = chord_history.iter().rev().take(6).cloned().collect();
     for (idx, entry) in recent.iter().enumerate() {
-        let Some(chord_root) = parse_note_name(&entry.root) else {
+        let Some(chord_root) = entry.root_pc else {
             continue;
         };
         let weight = match idx {
@@ -206,7 +188,7 @@ fn score_chord_history(key: DetectedKey, chord_history: &VecDeque<ChordHistoryEn
             _ => 2,
         };
         let rel = (chord_root as i32 + 12 - key.root as i32) % 12;
-        let minor_quality = is_minor_quality(&entry.quality);
+        let minor_quality = is_minor_quality(entry.quality);
 
         match rel {
             0 => {
@@ -218,7 +200,7 @@ fn score_chord_history(key: DetectedKey, chord_history: &VecDeque<ChordHistoryEn
             5 => score += weight * 2,
             7 => {
                 score += weight * 3;
-                if is_dominant_quality(&entry.quality) {
+                if is_dominant_quality(entry.quality) {
                     score += weight * 2;
                 }
             }
@@ -234,11 +216,7 @@ fn score_chord_history(key: DetectedKey, chord_history: &VecDeque<ChordHistoryEn
         let [a, b, c] = window else {
             continue;
         };
-        let (Some(a_root), Some(b_root), Some(c_root)) = (
-            parse_note_name(&a.root),
-            parse_note_name(&b.root),
-            parse_note_name(&c.root),
-        ) else {
+        let (Some(a_root), Some(b_root), Some(c_root)) = (a.root_pc, b.root_pc, c.root_pc) else {
             continue;
         };
         let rels = [
@@ -246,7 +224,7 @@ fn score_chord_history(key: DetectedKey, chord_history: &VecDeque<ChordHistoryEn
             (b_root as i32 + 12 - key.root as i32) % 12,
             (c_root as i32 + 12 - key.root as i32) % 12,
         ];
-        if rels == [2, 7, 0] && is_minor_quality(&a.quality) && is_dominant_quality(&b.quality) {
+        if rels == [2, 7, 0] && is_minor_quality(a.quality) && is_dominant_quality(b.quality) {
             score += 48;
         }
     }
@@ -255,15 +233,14 @@ fn score_chord_history(key: DetectedKey, chord_history: &VecDeque<ChordHistoryEn
         let [a, b] = window else {
             continue;
         };
-        let (Some(a_root), Some(b_root)) = (parse_note_name(&a.root), parse_note_name(&b.root))
-        else {
+        let (Some(a_root), Some(b_root)) = (a.root_pc, b.root_pc) else {
             continue;
         };
         let rels = [
             (a_root as i32 + 12 - key.root as i32) % 12,
             (b_root as i32 + 12 - key.root as i32) % 12,
         ];
-        if rels == [7, 0] && is_dominant_quality(&a.quality) {
+        if rels == [7, 0] && is_dominant_quality(a.quality) {
             score += 24;
         }
     }

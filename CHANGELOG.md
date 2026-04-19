@@ -3,6 +3,14 @@
 All notable changes to the **ChordLens** project will be documented in this file.
 This file is for user-visible changes. Contributor workflow belongs in `CONTRIBUTING.md`.
 
+## [Unreleased]
+
+### Fixed
+- **Overlapping MIDI Note Lifetime:** Duplicate `NoteOn` events for the same pitch now stay active until the last matching `NoteOff`, preventing stacked or retriggered notes from dropping out of chord detection too early.
+- **Held-Note Key Refresh:** Auto key tracking now re-evaluates while notes are sustained or evidence is still decaying, so confidence and displayed keys can continue updating without waiting for the next MIDI event.
+- **Key-Aware Note Coloring:** The GUI now colors chord roots, history, and active notes from stored pitch classes, keeping `Bb`, `Eb`, and `Ab` correct in flat contexts without reparsing display labels.
+- **Roman Numeral Terminology:** User-facing text now consistently describes the scale overlay as Roman numerals, and the docs clarify which controls are available only through the host.
+
 ## [0.1.8] - 2026-04-05
 
 ### Added
@@ -10,14 +18,12 @@ This file is for user-visible changes. Contributor workflow belongs in `CONTRIBU
 
 ### Changed
 - **Refined Key Tracking Engine:** Auto key detection now uses a more structured scoring pipeline with decaying note evidence, chord-context weighting, and confidence scoring for steadier musical results.
-- **Improved Debug Tuning Tools:** Debug builds can now show top key candidates and confidence in the plugin UI when `CHORDLENS_DEBUG_KEYS=1` is set.
 - **Chromatic Mode Display Behavior:** Chromatic mode now keeps normal chord detection and chord naming while disabling Nashville notation and scale-position note coloring.
 - **Chromatic Root Highlighting:** In chromatic mode, the detected root note still uses the main accent color so the display keeps a clear tonal anchor.
 
 ## [0.1.7] - 2026-04-05
 
 ### Changed
-- **More Reliable Release Packaging:** Release artifacts now use NIH-plug's native bundling flow for VST3 and CLAP packaging instead of simple renamed library files.
 - **Footer Spacing Polish:** Chord history now sits closer to the bottom edge with more balanced spacing, and the note list is positioned slightly lower for better visual alignment.
 - **Smarter Auto Key Tracking:** Key detection now reacts faster to real tonal changes while staying steadier through brief wrong notes, passing tones, and bluesy color notes.
 - **Held Notes Matter More:** Sustained notes now reinforce the detected key instead of letting short accidental notes dominate the result.
@@ -46,7 +52,6 @@ This file is for user-visible changes. Contributor workflow belongs in `CONTRIBU
 - **Key-Aware Enharmonic Naming:** Intelligent flat/sharp selection based on the detected musical key (e.g., Bb in F Major).
 - **Configurable Accumulation:** Added an **Acc: [ms]** control (0ms–100ms) to the UI to stabilize detection during live performance.
 - **Experimental Root-less Detection:** Optional toggle ("RL") to enable heuristic root inference (e.g., identifying G13 from F, A, B, E).
-- **Comprehensive Test Suite:** Decoupled unit tests into a dedicated `tests.rs` with extensive coverage for musical edge cases.
 
 ### Changed
 - **Improved Nashville/Roman Numerals:** Corrected case-handling for minor, diminished, and half-diminished degrees (e.g., `ii`, `øvii`).
@@ -57,7 +62,6 @@ This file is for user-visible changes. Contributor workflow belongs in `CONTRIBU
 ## [0.1.4] - 2026-04-04
 
 ### Changed
-- **Optimized Distribution:** Shifted to OS-specific ZIP bundles (`ChordLens_Windows.zip`, etc.) to provide a cleaner installation experience with native file naming.
 - **Project Identity:** Official Vendor and Author set to **Simon Heimler**.
 
 ## [0.1.3] - 2026-04-04
@@ -77,21 +81,16 @@ This file is for user-visible changes. Contributor workflow belongs in `CONTRIBU
 - **Simplified Octave Display:** Multiple octaves of the same pitch class (e.g., C2 + C3) now correctly display as a single unified note name (e.g., "C").
 ### Changed
 - **Clean UI State:** Removed the `-` placeholder from the root name when no MIDI notes are active; the display is now cleanly empty until input is received.
-- **Improved README:** Musician-oriented documentation with feature highlights and screenshot.
 
 ## [0.1.1] - 2026-04-04
 
 ### Changed
 - **Maximized Typography:** Increased initial font sizes (96px for Root, 48px for Nashville) for better visibility.
-- **Asset Optimization:** Removed dozens of unused font variants from the `assets/` folder to reduce plugin footprint.
-### Fixed
-- **Linux Build Environment:** Added missing `libx11-xcb-dev` system dependency for GitHub Actions.
 
 ## [0.1.0] - 2026-04-04
 
 ### Added
 - **Initial Alpha Release:** Core harmonic detection engine for chords and scales.
 - **Nashville Numbering System:** Real-time degree calculation relative to the detected key.
-- **Cross-Platform Release Automation:** Automated builds for Windows, macOS, and Linux via GitHub Actions.
 - **Stable 480x300 Layout:** Fixed-size VST3/CLAP GUI designed for minimal hosting glitches.
 - **Color-Coded Note Roles:** Visual distinction between scale-tonic, scale-step, and chromatic notes.

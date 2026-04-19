@@ -48,9 +48,16 @@ Those scripts are convenience wrappers. They use NIH-plug's bundler, copy bundle
 - Host-facing VST3 / CLAP artifacts are packaging concerns on top of the shared library. Different hosts and platforms are stricter than simple file renaming, so final release artifacts should always be produced through the bundler and then tested in a real host.
 - This is a MIDI utility plugin, not an audio DSP processor. Real-time safety still matters because chord detection happens inside `process()`.
 
+NIH-plug upgrade procedure:
+
+1. Update the pinned `rev` for both `nih_plug` and `nih_plug_egui` in `Cargo.toml`.
+2. Run `cargo update -p nih_plug -p nih_plug_egui`.
+3. Run the full verify loop plus `cargo xtask bundle chord-lens --release`.
+4. Re-check editor startup, persisted editor size recall, and at least one DAW host smoke test before merging the revision bump.
+
 ## Testing
 
-The current automated coverage is mostly unit-level chord detection logic in [`src/tests.rs`](/C:/Development/chord-lens/src/tests.rs). There is no host-level automated test for plugin loading, editor startup, parameter persistence, or DAW interoperability.
+The current automated coverage is still mostly unit-level and process-level logic in [`src/tests.rs`](/C:/Development/chord-lens/src/tests.rs), but it now also includes editor-construction and persisted editor-state smoke tests. There is still no full DAW interoperability test in the Rust suite.
 
 CI host-smoke coverage:
 
@@ -65,6 +72,11 @@ Hidden DAW-only parameter:
 - Default: `Balanced`.
 - It affects both internal key-switch hysteresis and the displayed-key confirmation time.
 
+Additional host-only parameters:
+
+- `Roman Numerals` toggles the scale-degree overlay from the DAW or preset system instead of from the egui editor.
+- `Root-less Voicings` enables the heuristic dominant/tonic root inference mode from the DAW or preset system.
+
 Debug-only key diagnostics:
 
 - In debug builds, set `CHORDLENS_DEBUG_KEYS=1` before launching the host to show a small candidate summary in the plugin UI.
@@ -74,8 +86,9 @@ Manual smoke testing matters:
 
 1. Build a release artifact.
 2. Load VST3 and CLAP versions in at least one supported host.
-3. Verify MIDI input, key detection, history view, manual key lock, and editor rendering.
-4. Confirm the host can rescan and reopen the plugin cleanly.
+3. For release work, include at least one non-Windows bundle or host smoke test when you have access to macOS or Linux.
+4. Verify MIDI input, key detection, history view, manual key lock, and editor rendering.
+5. Confirm the host can rescan and reopen the plugin cleanly.
 
 ## Releases
 
