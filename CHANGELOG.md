@@ -5,6 +5,8 @@ This file is for user-visible changes. Contributor workflow belongs in `CONTRIBU
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-19
+
 ### Fixed
 - **Overlapping MIDI Note Lifetime:** Duplicate `NoteOn` events for the same pitch now stay active until the last matching `NoteOff`, preventing stacked or retriggered notes from dropping out of chord detection too early.
 - **Held-Note Key Refresh:** Auto key tracking now re-evaluates while notes are sustained or evidence is still decaying, so confidence and displayed keys can continue updating without waiting for the next MIDI event.
