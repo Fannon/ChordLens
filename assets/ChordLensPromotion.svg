@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="633" viewBox="0 0 1280 633" role="img" aria-labelledby="title desc">
+  <title id="title">ChordLens promotional graphic</title>
+  <desc id="desc">A dark promotional graphic for ChordLens showing chord identification, scale tracking, Nashville numbering, and individual note roles.</desc>
+  <defs>
+    <style>
+      @font-face {
+        font-family: "Inter";
+        src: url("./Inter-Regular.ttf") format("truetype");
+        font-weight: 400;
+      }
+      @font-face {
+        font-family: "Inter";
+        src: url("./Inter-Light.ttf") format("truetype");
+        font-weight: 300;
+      }
+      .font { font-family: "Inter", "Segoe UI", Arial, sans-serif; font-weight: 300; }
+      .label { fill: #f3f4f6; font-size: 20px; font-weight: 700; letter-spacing: 0; }
+      .copy { fill: #d7d9df; font-size: 18px; font-weight: 400; }
+      .small { fill: #d9dce3; font-size: 16px; font-weight: 400; }
+      .muted { fill: #aeb3c0; }
+      .line { stroke: #6f737c; stroke-width: 1; opacity: .62; fill: none; }
+      .soft { filter: url(#softGlow); }
+    </style>
+    <radialGradient id="bgGlow" cx="48%" cy="48%" r="62%">
+      <stop offset="0%" stop-color="#161b24"/>
+      <stop offset="45%" stop-color="#10141b"/>
+      <stop offset="100%" stop-color="#0a0d13"/>
+    </radialGradient>
+    <linearGradient id="panelFill" x1="353" y1="153" x2="936" y2="523" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10151c"/>
+      <stop offset="52%" stop-color="#070a0f"/>
+      <stop offset="100%" stop-color="#0d1118"/>
+    </linearGradient>
+    <linearGradient id="buttonFill" x1="368" y1="168" x2="490" y2="191" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5b5f63"/>
+      <stop offset="100%" stop-color="#3d4146"/>
+    </linearGradient>
+    <filter id="noise" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="3" seed="9" result="grain"/>
+      <feColorMatrix in="grain" type="saturate" values="0"/>
+      <feComponentTransfer>
+        <feFuncA type="table" tableValues="0 .08"/>
+      </feComponentTransfer>
+    </filter>
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="1.3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="panelShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000000" flood-opacity=".5"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="633" fill="url(#bgGlow)"/>
+  <rect width="1280" height="633" fill="#090c12" opacity=".38" filter="url(#noise)"/>
+
+  <text class="font soft" x="640" y="91" text-anchor="middle" fill="#f7f7f9" font-size="76" font-weight="300">ChordLens</text>
+  <text class="font soft" x="640" y="131" text-anchor="middle" fill="#e2e5ec" font-size="23" font-weight="400">REAL-TIME HARMONIC DETECTION &amp; SCALE TRACKING</text>
+
+  <g filter="url(#panelShadow)">
+    <rect x="353" y="153" width="583" height="370" rx="4" fill="url(#panelFill)" stroke="#2c3441" stroke-width="1.2"/>
+    <rect x="356" y="156" width="577" height="364" rx="3" fill="none" stroke="#05070a" stroke-width="1" opacity=".65"/>
+  </g>
+
+  <g class="font">
+    <rect x="368" y="167" width="75" height="27" rx="2" fill="url(#buttonFill)" stroke="#272b30"/>
+    <text x="375" y="185" fill="#e9ebef" font-size="15">Auto</text>
+    <path d="M429 176h9l-4.5 7z" fill="#c8cbd1"/>
+    <text x="451" y="186" fill="#787882" font-size="20">Detected: C Major</text>
+    <rect x="801" y="167" width="56" height="27" rx="3" fill="#2d2d37"/>
+    <text x="815" y="184" fill="#dcdce6" font-size="13">Reset</text>
+    <rect x="863" y="167" width="61" height="27" rx="3" fill="#3c3c4b"/>
+    <text x="874" y="184" fill="#dcdce6" font-size="13">History</text>
+  </g>
+
+  <text class="font muted soft" x="722" y="267" font-size="39">(no5)</text>
+  <text class="font soft" x="494" y="383" fill="#79d7ee" font-size="157">D</text>
+  <text class="font soft" x="602" y="353" fill="#c9c9dc" font-size="62">m7</text>
+  <text class="font soft" x="373" y="505" fill="#f2f3f6" font-size="58">ii</text>
+  <text class="font soft" x="555" y="478" fill="#7eddf3" font-size="34">D3</text>
+  <circle cx="615" cy="466" r="2.2" fill="#676b75"/>
+  <text class="font soft" x="633" y="478" fill="#78dfb9" font-size="34">C4</text>
+  <circle cx="695" cy="466" r="2.2" fill="#676b75"/>
+  <text class="font soft" x="712" y="478" fill="#caa7ff" font-size="34">F4</text>
+
+  <g class="font">
+    <text class="label soft" x="85" y="286">NASHVILLE NUMBERING</text>
+    <text class="copy soft" x="112" y="313">Identifies chord degree</text>
+    <text class="copy soft" x="89" y="334">within the active scale (ii)</text>
+
+    <path class="line" d="M308 280H395V451"/>
+
+    <text class="label soft" x="79" y="470">INDIVIDUAL NOTE ROLES</text>
+    <text class="copy soft" x="88" y="497">Notes color-coded by role</text>
+    <text class="copy soft" x="102" y="518">(e.g., root, scale degree)</text>
+    <path class="line" d="M310 486H430V466H540"/>
+
+    <path class="line" d="M602 194V214H978"/>
+    <text class="label soft" x="987" y="215">SCALE TRACKING</text>
+    <text class="copy soft" x="987" y="241">Analyzes recent performance</text>
+    <text class="copy soft" x="987" y="262">history to suggest the most</text>
+    <text class="copy soft" x="987" y="284">likely key (C Major)</text>
+
+    <path class="line" d="M688 350H978"/>
+    <text class="label soft" x="987" y="359">CHORD IDENTIFICATION</text>
+    <text class="copy soft" x="987" y="385">Clear name for triads, seventh</text>
+    <text class="copy soft" x="987" y="407">chords, and complex</text>
+    <text class="copy soft" x="987" y="428">extensions (Dm7 no5)</text>
+  </g>
+</svg>

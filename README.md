@@ -2,7 +2,7 @@
 
 ChordLens is a minimalist MIDI chord and key detector plugin for producers, songwriters, and musicians. It listens to incoming MIDI, identifies the current chord, estimates the active key, and can show Roman numeral scale degrees in real time.
 
-![ChordLens](assets/ChordLensPromotion.png)
+![ChordLens](assets/ChordLensPromotion.svg)
 
 ## Features
 
